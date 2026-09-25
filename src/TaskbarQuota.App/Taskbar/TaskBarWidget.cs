@@ -954,12 +954,8 @@ namespace TaskbarQuota.Taskbar
         /// <summary>
         /// Lays the tiles out and resizes the host to the result.
         ///
-        /// Every tile renders exactly what the user configured — all of its rows, with their reset
-        /// countdowns. There is deliberately no reduced form: trimming a pinned provider is worse than
-        /// refusing the pin (issue #25), so keeping the row inside the bar is
-        /// <see cref="Services.PinBudgetService"/>'s job. The only concession made here is holding back the
-        /// unpinned active tile when it arrives beside a full pinned set and the row still overflows the
-        /// measured gap.
+        /// Unpinned tiles give way first when the measured gap is narrow. Pinned tiles then switch to the
+        /// percentages-only layout while keeping their rows and values.
         ///
         /// Widths are measured, never rendered: <see cref="WidgetSummary.MeasureDesiredWidth"/> is a pure
         /// calculation over the columns, whereas rendering to read a width restarted the tile's refresh
@@ -1012,6 +1008,10 @@ namespace TaskbarQuota.Taskbar
                     ? AgentActivitySummary.MinimumLogicalWidth + ActivitySummaryMarginLogicalPx
                     : 0;
                 count = HoldBackTilesThatDoNotFit(layoutSlots, count, minimumActivityWidth);
+                bool compactPins = minimumActivityWidth + MeasureRow(layoutSlots, count) > availableLogicalWidth;
+                for (int i = 0; i < tiles.Length; i++)
+                    tiles[i].SetCompactForSpace(compactPins && tileProviders[i] is { } provider
+                        && WidgetSettingsService.IsProviderPinned(provider));
 
                 // Widths are measured, never rendered — MeasureDesiredWidth is a pure calculation.
                 // Rendering to measure made the tile restart its refresh animation on every usage publish,
@@ -1202,7 +1202,7 @@ namespace TaskbarQuota.Taskbar
             int total = 0;
             for (int n = 0; n < count; n++)
             {
-                total += tiles[slots[n]].MeasureDesiredWidth()
+                total += tiles[slots[n]].MeasureFullWidth()
                     + TileHorizontalMarginLogicalPx
                     + (n > 0 ? TileSeparatorLogicalPx : 0);
             }

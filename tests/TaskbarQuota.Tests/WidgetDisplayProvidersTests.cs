@@ -73,19 +73,19 @@ public class WidgetDisplayProvidersTests
     }
 
     [Fact]
-    public void HiddenOrUnavailablePinnedProvidersAreDropped()
+    public void PinnedProvidersRemainCandidatesWhenHiddenOrUnavailable()
     {
         var hidden = Compute(
             active: ProviderId.Codex,
             pinned: new[] { ProviderId.Claude },
             isVisible: p => p != ProviderId.Claude);
-        Assert.Equal(new[] { ProviderId.Codex }, hidden);
+        Assert.Equal(new[] { ProviderId.Claude, ProviderId.Codex }, hidden);
 
         var unavailable = Compute(
             active: ProviderId.Codex,
             pinned: new[] { ProviderId.Claude },
             isAvailable: p => p != ProviderId.Claude);
-        Assert.Equal(new[] { ProviderId.Codex }, unavailable);
+        Assert.Equal(new[] { ProviderId.Claude, ProviderId.Codex }, unavailable);
     }
 
     [Fact]

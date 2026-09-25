@@ -15,28 +15,12 @@ internal readonly record struct PinBudgetDisplay(
     IReadOnlyList<ProviderId> Providers,
     int FitMargin = 0);
 
-/// <summary>State carried between budget evaluations so transient geometry does not evict a pin.</summary>
 internal readonly record struct BudgetHysteresisState(
     string? Signature,
     int ConsecutiveOverBudget);
 
-/// <summary>
-/// Decides whether a provider can be pinned, by the only measure that matters: whether the tile set fits the
-/// free space each taskbar display actually has.
-///
-/// A pinned tile is never trimmed or reduced — it renders exactly the rows the user configured — so a set
-/// that does not fit has to be refused up front rather than rendered badly. There is deliberately no
-/// second, abstract allowance on top of this. An earlier weight budget (a provider costing one or two
-/// "slots" out of five) both duplicated this check and contradicted it: three three-row providers come to
-/// 1241px, which fits a left-aligned taskbar comfortably, yet cost six slots and were refused. Measured
-/// space is the rule; anything else is a guess that eventually says no to something that plainly works.
-/// </summary>
 public static class PinBudgetService
 {
-    /// <summary>Raised after the budget auto-unpins providers, so the UI can refresh and explain.</summary>
-    public static event Action<IReadOnlyList<ProviderId>>? ProvidersUnpinned;
-
-    /// <summary>Number of consecutive over-budget evaluations required before silent eviction.</summary>
     internal const int BudgetHysteresisEvaluationCount = 3;
 
     /// <summary>
@@ -60,8 +44,6 @@ public static class PinBudgetService
     private const int EstimatedFitMarginLogicalPx = 12;
     // No slack once every width in a display group is the widget's own measurement.
     private const int MeasuredFitMarginLogicalPx = 0;
-
-    private static BudgetHysteresisState budgetHysteresis;
 
     /// <summary>Width a provider's tile takes, from the column groups its rows occupy.</summary>
     internal static int EstimateTileWidth(int rows)
@@ -148,167 +130,17 @@ public static class PinBudgetService
         return true;
     }
 
-    /// <summary>
-    /// Whether <paramref name="provider"/> can be pinned right now. The reason states the cap and the
-    /// per-display width calculations that led to a refusal, so a multi-monitor layout is diagnosable.
-    /// </summary>
     public static bool CanPin(ProviderId provider, out string reason)
         => CanPin(provider, WidgetSettingsService.GetPinnedProviderDisplay(provider), out reason);
 
-    /// <summary>
-    /// Whether <paramref name="provider"/> can be pinned at the prospective adaptive destination. The
-    /// destination must be evaluated before it is persisted; otherwise admission uses the provider's old
-    /// route and can accept or reject the pin against the wrong display.
-    /// </summary>
     public static bool CanPin(ProviderId provider, string? prospectivePinnedDisplay, out string reason)
     {
-        string? currentPinnedDisplay = WidgetSettingsService.GetPinnedProviderDisplay(provider);
-        if (WidgetSettingsService.IsProviderPinned(provider)
-            && string.Equals(
-                currentPinnedDisplay,
-                prospectivePinnedDisplay,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            reason = string.Empty;
-            return true;
-        }
-
-        var pinned = PinnedProviders();
-        string name = ProviderName(provider);
-        bool floating = WidgetSettingsService.CurrentSurface == WidgetSurfaceMode.Floating;
-        string surfaceNoun = floating ? "floating widget" : "taskbar";
-        var candidate = pinned.Contains(provider)
-            ? pinned
-            : pinned.Append(provider).ToList();
-        var displays = BuildDisplayBudgets(candidate, provider, prospectivePinnedDisplay);
-        var calculations = CalculateDisplays(candidate, displays);
-        int maxTiles = UsageCoordinator.MaxDisplayedWidgetTiles;
-        string calculationText = DescribeCalculations(calculations, candidate.Count, maxTiles);
-
-        if (!FitsTaskbar(candidate, displays, maxTiles))
-        {
-            var blockingCaps = calculations
-                .Where(calculation => calculation.Providers.Length > maxTiles)
-                .ToList();
-            var blockingWidths = calculations
-                .Where(calculation => calculation.AvailableWidth > TaskbarSpace.UnknownWidth
-                    && calculation.RequiredWidth > calculation.AvailableWidth)
-                .ToList();
-            bool globalCapFallback = displays.Count == 0 && candidate.Count > maxTiles;
-
-            LogPinRefusal(provider, calculations, calculationText);
-            if (floating || globalCapFallback)
-            {
-                reason = $"The {surfaceNoun} can show at most {maxTiles} quota providers at once, and you already "
-                    + $"have {string.Join(", ", pinned.Select(ProviderName))} pinned ({calculationText}). "
-                    + $"Unpin one of those to make room for {name}.";
-                return false;
-            }
-
-            var blocking = blockingCaps
-                .Select(calculation =>
-                    $"{DisplayLabel(calculation.DisplayKey)} ({calculation.Providers.Length}/{maxTiles} routed tiles)")
-                .Concat(blockingWidths.Select(calculation =>
-                    $"{DisplayLabel(calculation.DisplayKey)} ({calculation.RequiredWidth}px needed vs {calculation.AvailableWidth}px available)"))
-                .ToList();
-            string blockedDisplays = blocking.Count == 0
-                ? string.Empty
-                : $" Blocked by {string.Join(" and ", blocking)}.";
-
-            reason = $"There isn't room on the taskbar for {name} ({Describe(provider)}) next to "
-                  + $"{string.Join(" and ", pinned.Select(p => $"{ProviderName(p)} ({Describe(p)})"))}. "
-                  + $"{calculationText}.{blockedDisplays} Turn off some rows for {name} or for a pinned provider, unpin one, or set the Windows "
-                  + "taskbar to left alignment — that frees up a lot more room.";
-            return false;
-        }
-
         reason = string.Empty;
         return true;
     }
 
-    private static void LogPinRefusal(
-        ProviderId provider,
-        IReadOnlyList<DisplayBudgetCalculation> calculations,
-        string calculationText)
-    {
-        Diagnostics.Log.Debug(
-            $"[pin] refused {provider}: {calculationText} displays="
-            + $"[{string.Join(", ", calculations.Select(FormatCalculationForLog))}]");
-    }
-
-    private static string Describe(ProviderId provider)
-    {
-        int rows = RowCount(provider);
-        return rows == 1 ? "1 row" : $"{rows} rows";
-    }
-
-    /// <summary>
-    /// Brings the pinned set back inside the taskbar by unpinning the least recently used providers, and
-    /// reports which went. The same over-budget condition must persist for three evaluations before a pin
-    /// is removed, protecting against a transient or false geometry measurement.
-    /// </summary>
-    /// <param name="notify">
-    /// False when the caller raises <see cref="WidgetSettingsService.Changed"/> itself straight after, so
-    /// one user action does not rebuild the nav badges, the flyout strip and every widget tile twice.
-    /// </param>
     public static IReadOnlyList<ProviderId> EnforceBudget(bool notify = true)
-    {
-        var pinned = PinnedProviders();
-        if (pinned.Count == 0)
-        {
-            budgetHysteresis = default;
-            return Array.Empty<ProviderId>();
-        }
-
-        var recent = UsageCoordinator.Instance.RecentProviders;
-        var displays = BuildDisplayBudgets(pinned);
-        var calculations = CalculateDisplays(pinned, displays);
-        string signature = BudgetSignature(pinned, displays, recent);
-
-        var recency = new Dictionary<ProviderId, int>();
-        for (int i = 0; i < recent.Count; i++)
-            recency.TryAdd(recent[i], i);
-
-        // Least recently active first: whatever the user has touched most recently is what they want kept.
-        var order = pinned
-            .OrderByDescending(p => recency.TryGetValue(p, out int index) ? index : int.MaxValue)
-            .ToList();
-        var entries = order.Select(provider => (Provider: provider, Width: TileWidth(provider))).ToList();
-        var dropped = SelectDropsForDisplays(entries, displays, UsageCoordinator.MaxDisplayedWidgetTiles);
-        bool overBudget = dropped.Count > 0;
-
-        budgetHysteresis = AdvanceBudgetHysteresis(budgetHysteresis, signature, overBudget);
-        if (!IsBudgetEvictionDue(budgetHysteresis))
-            return Array.Empty<ProviderId>();
-
-        foreach (var provider in dropped)
-            WidgetSettingsService.SetProviderPinnedSilent(provider, false);
-
-        if (dropped.Count > 0)
-        {
-            string blockingDisplays = string.Join(
-                ", ",
-                calculations
-                    .Where(calculation => calculation.Providers.Length > UsageCoordinator.MaxDisplayedWidgetTiles
-                        || (calculation.AvailableWidth > TaskbarSpace.UnknownWidth
-                            && calculation.RequiredWidth > calculation.AvailableWidth))
-                    .Select(FormatCalculationForLog));
-            Diagnostics.Log.Warning(
-                $"[pin] auto-unpinned after {BudgetHysteresisEvaluationCount} consecutive over-budget evaluations: "
-                + $"dropped=[{string.Join(", ", dropped)}] blocked=[{blockingDisplays}] displays="
-                + $"[{string.Join(", ", calculations.Select(FormatCalculationForLog))}]");
-
-            // The set just changed; do not carry the old condition into the next set.
-            budgetHysteresis = default;
-            if (notify)
-                WidgetSettingsService.SaveProviderPinsAndNotify();
-            else
-                WidgetSettingsService.SaveProviderPins();
-            ProvidersUnpinned?.Invoke(dropped);
-        }
-
-        return dropped;
-    }
+        => Array.Empty<ProviderId>();
 
     /// <summary>Advances hysteresis state; pure so consecutive-evaluation behavior can be tested directly.</summary>
     internal static BudgetHysteresisState AdvanceBudgetHysteresis(

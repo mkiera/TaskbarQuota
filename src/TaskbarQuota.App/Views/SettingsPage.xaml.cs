@@ -313,17 +313,6 @@ namespace TaskbarQuota.Views
                 return;
             }
 
-            string? prospectiveDisplay = option.MatchesAnyDestination
-                ? WidgetSettingsService.GetPinnedProviderDisplay(item.Id)
-                : string.IsNullOrWhiteSpace(option.DisplayKey) ? null : option.DisplayKey;
-            if (option.IsPinned && !PinBudgetService.CanPin(item.Id, prospectiveDisplay, out var reason))
-            {
-                PinBlockedBar.Message = reason;
-                PinBlockedBar.IsOpen = true;
-                RefreshProviderRow(item);
-                return;
-            }
-
             PinBlockedBar.IsOpen = false;
             ViewModel.ApplyPinned(item, option.IsPinned);
             // The normal-mode "Pinned" option has no destination semantics and must preserve the saved

@@ -29,6 +29,18 @@ public class ProviderDiscoveryServiceTests
     }
 
     [Fact]
+    public void RecordFetchResult_DoesNotHideOrUnpinUnavailablePinnedProvider()
+    {
+        WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Grok, true);
+        var result = UsageResult.Failure(ProviderId.Grok, "Not installed", kind: ProviderErrorKind.NotInstalled);
+
+        ProviderDiscoveryService.RecordFetchResult(result);
+
+        Assert.True(WidgetSettingsService.IsProviderPinned(ProviderId.Grok));
+        Assert.True(WidgetSettingsService.IsProviderVisible(ProviderId.Grok));
+    }
+
+    [Fact]
     public void RecordFetchResult_MarksConfiguredWithoutRestoringVisibility()
     {
         ProviderInstallDetector.IsInstalledOverrideForTesting = id => id == ProviderId.Codex;

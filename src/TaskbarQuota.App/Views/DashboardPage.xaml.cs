@@ -484,21 +484,6 @@ namespace TaskbarQuota.Views
             bool pinHere = _pinHereDisplayKey.Length > 0
                 && WidgetSettingsService.CurrentSurface == WidgetSurfaceMode.Taskbar
                 && WidgetSettingsService.CurrentTaskbarPlacement == TaskbarPlacementMode.Adaptive;
-            string? prospectiveDisplay = pinHere
-                ? _pinHereDisplayKey
-                : WidgetSettingsService.GetPinnedProviderDisplay(card.ProviderId);
-            if (wantPinned && !Services.PinBudgetService.CanPin(card.ProviderId, prospectiveDisplay, out var reason))
-            {
-                // Over budget: refuse rather than silently unpinning something the user still wants, and
-                // show why plus what to change — a toggle that springs back with no explanation reads as
-                // a broken button.
-                toggle.IsChecked = false;
-                PinBlockedTip.Target = toggle;
-                PinBlockedTip.Subtitle = reason;
-                PinBlockedTip.IsOpen = true;
-                return;
-            }
-
             PinBlockedTip.IsOpen = false;
 
             if (wantPinned)

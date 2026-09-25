@@ -47,7 +47,7 @@ public static class ProviderDiscoveryService
             bool dashboardChanged = false;
             foreach (ProviderId id in Enum.GetValues<ProviderId>())
             {
-                if (ExplicitlyDisabled.Contains(id))
+                if (ExplicitlyDisabled.Contains(id) && !WidgetSettingsService.IsProviderPinned(id))
                     continue;
 
                 if (ProviderInstallDetector.IsInstalled(id))
@@ -88,7 +88,8 @@ public static class ProviderDiscoveryService
             if (result.ErrorKind == ProviderErrorKind.NotInstalled
                 && !ProviderInstallDetector.IsInstalled(result.Id)
                 && WidgetSettingsService.AutoHideUnavailable
-                && !ExplicitlyEnabled.Contains(result.Id))
+                && !ExplicitlyEnabled.Contains(result.Id)
+                && !WidgetSettingsService.IsProviderPinned(result.Id))
             {
                 WidgetSettingsService.SetProviderDashboardVisible(result.Id, false);
                 WidgetSettingsService.SetProviderVisible(result.Id, false);

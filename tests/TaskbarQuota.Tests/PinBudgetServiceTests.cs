@@ -12,6 +12,34 @@ namespace TaskbarQuota.Tests;
 [Collection(WidgetRowSettingsCollection.Name)]
 public class PinBudgetServiceTests
 {
+    [Fact]
+    public void EnforceBudgetKeepsPinsAcrossRepeatedNarrowLaneMeasurements()
+    {
+        var providers = Enum.GetValues<ProviderId>();
+        var previousPins = providers.ToDictionary(provider => provider, WidgetSettingsService.IsProviderPinned);
+        try
+        {
+            WidgetSettingsService.ResetProviderPinsForTesting();
+            WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Codex, true);
+            WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Claude, true);
+            TaskbarSpace.ResetAvailableWidth();
+            TaskbarSpace.ReportAvailableWidth("DISPLAY1", 58, isPrimary: true);
+
+            for (int i = 0; i < 5; i++)
+                Assert.Empty(PinBudgetService.EnforceBudget());
+
+            Assert.True(WidgetSettingsService.IsProviderPinned(ProviderId.Codex));
+            Assert.True(WidgetSettingsService.IsProviderPinned(ProviderId.Claude));
+        }
+        finally
+        {
+            WidgetSettingsService.ResetProviderPinsForTesting();
+            foreach (var pair in previousPins.Where(pair => pair.Value))
+                WidgetSettingsService.SetProviderPinnedForTesting(pair.Key, true);
+            TaskbarSpace.ResetAvailableWidth();
+        }
+    }
+
     // Measured tile widths: a two-row provider renders around 223px, a three-row one around 405px.
     private const int ShortTile = 223;
     private const int LongTile = 405;
@@ -179,7 +207,7 @@ public class PinBudgetServiceTests
     }
 
     [Fact]
-    public void CanPinEvaluatesTheProspectiveDestinationInsteadOfTheOldRoute()
+    public void CanPinAcceptsEveryDestinationEvenWhenTheDisplayIsFull()
     {
         var providers = Enum.GetValues<ProviderId>();
         var previousPins = providers.ToDictionary(
@@ -227,8 +255,8 @@ public class PinBudgetServiceTests
             TaskbarSpace.ReportAvailableWidth("DISPLAY2", TaskbarSpace.UnknownWidth);
 
             Assert.True(PinBudgetService.CanPin(candidate, out _));
-            Assert.False(PinBudgetService.CanPin(candidate, "DISPLAY2", out string reason));
-            Assert.Contains($"{maxTiles + 1}/{maxTiles} routed tiles", reason);
+            Assert.True(PinBudgetService.CanPin(candidate, "DISPLAY2", out string reason));
+            Assert.Empty(reason);
 
             WidgetSettingsService.SetProviderPinnedForTesting(candidate, true);
             pinnedDisplays[candidate.ToString()] = "DISPLAY1";
@@ -239,7 +267,7 @@ public class PinBudgetServiceTests
                 pinnedDisplays);
 
             Assert.True(PinBudgetService.CanPin(candidate, out _));
-            Assert.False(PinBudgetService.CanPin(candidate, "DISPLAY2", out _));
+            Assert.True(PinBudgetService.CanPin(candidate, "DISPLAY2", out _));
         }
         finally
         {
