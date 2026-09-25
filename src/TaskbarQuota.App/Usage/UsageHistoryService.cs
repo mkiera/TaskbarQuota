@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 using TaskbarQuota.Diagnostics;
 
@@ -25,6 +26,9 @@ namespace TaskbarQuota.Usage
             UsageHistory History);
 
         private static readonly object CacheLock = new();
+        private static bool enabled;
+        public static bool IsEnabled => Volatile.Read(ref enabled);
+        public static void Enable() => Volatile.Write(ref enabled, true);
         private static readonly Dictionary<ProviderId, HistoryCacheEntry> Cache = new();
         private static readonly Dictionary<ProviderId, object> ProviderLocks =
             Enum.GetValues<ProviderId>().ToDictionary(id => id, _ => new object());
@@ -39,6 +43,12 @@ namespace TaskbarQuota.Usage
 
         public static bool TryLoad(ProviderId providerId, out UsageHistory history)
         {
+            if (!IsEnabled)
+            {
+                history = new UsageHistory();
+                return false;
+            }
+
             lock (ProviderLocks[providerId])
                 return TryLoadCore(providerId, out history);
         }

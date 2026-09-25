@@ -45,7 +45,7 @@ namespace TaskbarQuota
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
             Dispatcher = DispatcherQueue.GetForCurrentThread();
-            RegisterForWindowsRestart(IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs(), Program.InitialActivationKind));
+            RegisterForWindowsRestart();
             AppStorage.MigrateLegacyDataIfNeeded();
             StartupSettingsService.MigrateLegacyStartupEntryIfNeeded();
 
@@ -71,26 +71,14 @@ namespace TaskbarQuota
             };
             updateTimer.Start();
 
-            if (!IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs(), Program.InitialActivationKind))
-            {
-                try
-                {
-                    ShowMainWindow();
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Failed to open main window on launch");
-                }
-            }
-
         }
 
-        private static void RegisterForWindowsRestart(bool widgetStartup)
+        private static void RegisterForWindowsRestart()
         {
             try
             {
                 var result = Kernel32.RegisterApplicationRestart(
-                    widgetStartup ? StartupSettingsService.StartupArgument : null,
+                    StartupSettingsService.StartupArgument,
                     ApplicationRestart.NoReboot);
                 Log.Debug($"Registered Windows restart recovery: HRESULT 0x{result:X8}");
             }

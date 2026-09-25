@@ -48,10 +48,11 @@ namespace TaskbarQuota
         {
             Root.Loaded -= OnRootLoaded;
             ApplyInitialWindowSize();
-            _navigationBinder?.SetProviderPageActive(false);
-            Nav.SelectedItem = CostNavigationItem;
-            if (ContentFrame.CurrentSourcePageType != typeof(CostPage))
-                ContentFrame.Navigate(typeof(CostPage), null, new SuppressNavigationTransitionInfo());
+            if (ContentFrame.CurrentSourcePageType is null)
+            {
+                _navigationBinder?.SetProviderPageActive(true);
+                ContentFrame.Navigate(typeof(DashboardPage), false, new SuppressNavigationTransitionInfo());
+            }
         }
 
         private void ApplyInitialWindowSize()

@@ -65,7 +65,11 @@ namespace TaskbarQuota.Views
                 ApplyLayoutState();
                 UpdatePinPresentation(ViewModel.SelectedCard);
                 QueueMeasuredHeightReport();
-                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _ = ViewModel.LoadAsync());
+                if (!_useCompactLayout)
+                {
+                    UsageHistoryService.Enable();
+                    DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _ = ViewModel.LoadAsync());
+                }
             };
             Unloaded += (_, _) =>
             {
