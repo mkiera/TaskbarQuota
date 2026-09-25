@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using TaskbarQuota.ViewModels;
+using TaskbarQuota.Usage;
 
 namespace TaskbarQuota.Views
 {
@@ -19,6 +20,7 @@ namespace TaskbarQuota.Views
         private void CostPage_Loaded(object sender, RoutedEventArgs e)
         {
             Loaded -= CostPage_Loaded;
+            UsageHistoryService.Enable();
             DispatcherQueue.TryEnqueue(
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 () => _ = ViewModel.LoadAsync());

@@ -78,6 +78,9 @@ namespace TaskbarQuota.Usage.Providers
             string cookie,
             CancellationToken cancellationToken)
         {
+            if (!UsageHistoryService.IsEnabled)
+                return;
+
             try
             {
                 usage.UsageHistory = await CursorUsageEventsClient.FetchHistoryAsync(

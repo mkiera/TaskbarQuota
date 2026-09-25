@@ -18,6 +18,7 @@ namespace TaskbarQuota.Views
     {
         public SettingsViewModel ViewModel { get; } = new();
         private bool _isInitializing;
+        private bool _updatingStartupToggle;
         // Suppresses the Toggled handlers while a row's toggles are synced programmatically.
         private bool _suppressProviderToggleEvents;
         private bool _suppressProviderMuteEvents;
@@ -74,7 +75,7 @@ namespace TaskbarQuota.Views
                 _ => 0,
             };
             PercentageModeCombo.SelectedIndex = WidgetSettingsService.CurrentPercentageMode == PercentageDisplayMode.Remaining ? 1 : 0;
-            StartupToggle.IsOn = StartupSettingsService.IsEnabled;
+            StartupToggle.IsEnabled = false;
             ApplyQuotaAlertSettingsToControls();
             AutoHideUnavailableToggle.IsOn = WidgetSettingsService.AutoHideUnavailable;
             HideWhenUnfocusedToggle.IsOn = WidgetSettingsService.HideWhenProviderUnfocused;
@@ -82,8 +83,9 @@ namespace TaskbarQuota.Views
             RebuildProviderSettings();
             RebuildMutedProviderSettings();
             VersionLabel.Text = $"Version {AppVersion.GetDisplayLabel()}";
-            Loaded += (_, _) =>
+            Loaded += async (_, _) =>
             {
+                await RefreshStartupToggleAsync();
                 Log.Information(
                     $"Settings page loaded (surface={WidgetSettingsService.CurrentSurface}, layout={WidgetSettingsService.Current})");
                 ViewModel.ReloadProviders();
@@ -313,18 +315,6 @@ namespace TaskbarQuota.Views
                 return;
             }
 
-            string? prospectiveDisplay = option.MatchesAnyDestination
-                ? WidgetSettingsService.GetPinnedProviderDisplay(item.Id)
-                : string.IsNullOrWhiteSpace(option.DisplayKey) ? null : option.DisplayKey;
-            if (option.IsPinned && !PinBudgetService.CanPin(item.Id, prospectiveDisplay, out var reason))
-            {
-                PinBlockedBar.Message = reason;
-                PinBlockedBar.IsOpen = true;
-                RefreshProviderRow(item);
-                return;
-            }
-
-            PinBlockedBar.IsOpen = false;
             ViewModel.ApplyPinned(item, option.IsPinned);
             // The normal-mode "Pinned" option has no destination semantics and must preserve the saved
             // adaptive destination. In adaptive mode, an empty destination deliberately means follow app.
@@ -603,12 +593,47 @@ namespace TaskbarQuota.Views
             }
         }
 
-        private void OnStartupToggled(object sender, RoutedEventArgs e)
+        private async void OnStartupToggled(object sender, RoutedEventArgs e)
         {
-            if (_isInitializing)
+            if (_isInitializing || _updatingStartupToggle)
                 return;
 
-            StartupSettingsService.Apply(StartupToggle.IsOn);
+            _updatingStartupToggle = true;
+            StartupToggle.IsEnabled = false;
+            try
+            {
+                StartupToggle.IsOn = await StartupSettingsService.ApplyAsync(StartupToggle.IsOn);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warning(ex, "Could not change startup registration");
+                await RefreshStartupToggleAsync();
+            }
+            finally
+            {
+                _updatingStartupToggle = false;
+                StartupToggle.IsEnabled = true;
+            }
+        }
+
+        private async System.Threading.Tasks.Task RefreshStartupToggleAsync()
+        {
+            _updatingStartupToggle = true;
+            StartupToggle.IsEnabled = false;
+            try
+            {
+                StartupToggle.IsOn = await StartupSettingsService.IsEnabledAsync();
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warning(ex, "Could not read startup registration");
+                StartupToggle.IsOn = false;
+            }
+            finally
+            {
+                _updatingStartupToggle = false;
+                StartupToggle.IsEnabled = true;
+            }
         }
 
         private void OnPercentageModeChanged(object sender, SelectionChangedEventArgs e)

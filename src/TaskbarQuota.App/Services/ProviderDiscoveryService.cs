@@ -88,7 +88,8 @@ public static class ProviderDiscoveryService
             if (result.ErrorKind == ProviderErrorKind.NotInstalled
                 && !ProviderInstallDetector.IsInstalled(result.Id)
                 && WidgetSettingsService.AutoHideUnavailable
-                && !ExplicitlyEnabled.Contains(result.Id))
+                && !ExplicitlyEnabled.Contains(result.Id)
+                && !WidgetSettingsService.IsProviderPinned(result.Id))
             {
                 WidgetSettingsService.SetProviderDashboardVisible(result.Id, false);
                 WidgetSettingsService.SetProviderVisible(result.Id, false);

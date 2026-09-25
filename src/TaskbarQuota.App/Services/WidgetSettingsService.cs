@@ -459,10 +459,6 @@ public static class WidgetSettingsService
 
         ShowAgentActivityInWidget = enabled;
         Save(ShowAgentActivityInWidgetPath, enabled ? 1 : 0);
-        // Activity shares the taskbar area with quota tiles. Start reconciling pins against the effective
-        // two-tile cap; hysteresis delays eviction until the over-budget geometry is stable, and the active
-        // tile fills a remaining slot only after pins have been placed.
-        Services.PinBudgetService.EnforceBudget(notify: false);
         Changed?.Invoke(null, EventArgs.Empty);
     }
 
@@ -484,14 +480,6 @@ public static class WidgetSettingsService
 
         RowVisibility[key] = visible;
         SaveRowVisibility();
-        // Enabling a row can promote a pinned provider from short to long and push the pinned set over
-        // budget. The row toggle always wins — it is this provider's own display setting — so the budget
-        // is reconciled by eventually dropping the least recently used pin instead of refusing the change.
-        //
-        // Silent, because the single Changed below already covers both edits. Letting the rebalance raise
-        // its own notification meant one row toggle rebuilt the nav badges, the flyout strip and every
-        // widget tile twice.
-        Services.PinBudgetService.EnforceBudget(notify: false);
         Changed?.Invoke(null, EventArgs.Empty);
     }
 

@@ -9,8 +9,7 @@ namespace TaskbarQuota.Tests;
 /// The taskbar row renders pinned providers exactly as configured (issue #25): every row, every reset
 /// countdown, no trimming and no glyph fallback. That used to be enforced by a layout solver whose ladder
 /// held a single rung — a search that could only ever return one answer — so the guarantee is structural
-/// now instead: there is no reduced form for a tile to fall back to, and keeping the row inside the
-/// taskbar is the pin budget's job (see <see cref="PinBudgetServiceTests"/>).
+/// now instead: there is no reduced form for a tile to fall back to.
 ///
 /// What survives as testable logic is the order in which the widget holds a tile back when the row still
 /// overflows the measured gap: least recently used first, so whatever the user was last working in stays.

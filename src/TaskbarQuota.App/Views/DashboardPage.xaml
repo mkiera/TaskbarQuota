@@ -638,12 +638,6 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Explains a refused pin. A tooltip on the button is no use here: the user has just clicked it
-             and watched nothing happen, so the reason has to appear without being hunted for. -->
-        <muxc:TeachingTip x:Name="PinBlockedTip"
-                          Title="Can't pin this provider"
-                          PreferredPlacement="Bottom"
-                          IsLightDismissEnabled="True"/>
         <muxc:TeachingTip x:Name="ProviderShareTip"
                           PreferredPlacement="Bottom"
                           IsLightDismissEnabled="True"/>

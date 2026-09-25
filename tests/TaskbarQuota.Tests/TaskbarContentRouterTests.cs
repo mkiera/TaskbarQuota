@@ -272,7 +272,7 @@ public class TaskbarContentRouterTests
         Func<ProviderId, string?> assignment,
         Func<ProviderId, bool>? isPinned = null,
         Func<ProviderId, string?>? pinAssignment = null,
-        int maxCount = UsageCoordinator.MaxWidgetTiles)
+        int maxCount = 3)
         => TaskbarContentRouter.ProvidersForDisplay(
             providers,
             mode,

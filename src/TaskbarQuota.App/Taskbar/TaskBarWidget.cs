@@ -104,29 +104,25 @@ namespace TaskbarQuota.Taskbar
         private AppWindow? appWindow;
         private IntPtr activityHwnd;
         private AppWindow? activityAppWindow;
-        // Fixed pool of tile slots, created once and reused. Slot i renders tileProviders[i]; reassigning a
-        // slot to another provider re-renders it through WidgetSummary's normal provider-switch path. A
-        // fixed pool means the panel's children never change, so no tile is ever unloaded and re-loaded
-        // (which would drop its WidgetSettingsService subscription) when the display order shifts.
-        private readonly WidgetSummary[] tiles = new WidgetSummary[UsageCoordinator.MaxWidgetTiles];
+        private WidgetSummary[] tiles = new WidgetSummary[UsageCoordinator.InitialWidgetTileCount];
         private AgentActivitySummary? activitySummary;
         private AgentActivitySnapshot activitySnapshot = new(Array.Empty<AgentActivityItem>());
         private AgentActivitySnapshot? pendingEmptyActivitySnapshot;
         private readonly Microsoft.UI.Xaml.DispatcherTimer activityEmptySnapshotTimer;
         // separators[i] is the "|" divider between slot i and slot i+1.
-        private readonly Microsoft.UI.Xaml.Controls.TextBlock[] separators =
-            new Microsoft.UI.Xaml.Controls.TextBlock[UsageCoordinator.MaxWidgetTiles - 1];
-        private readonly ProviderId?[] tileProviders = new ProviderId?[UsageCoordinator.MaxWidgetTiles];
+        private Microsoft.UI.Xaml.Controls.TextBlock[] separators =
+            new Microsoft.UI.Xaml.Controls.TextBlock[UsageCoordinator.InitialWidgetTileCount - 1];
+        private ProviderId?[] tileProviders = new ProviderId?[UsageCoordinator.InitialWidgetTileCount];
         // Slot has a provider AND fits inside the measured taskbar gap. A pinned tile is never suppressed;
         // the active tile is the courtesy tile that gives way when the pins fill the gap.
-        private readonly bool[] tileFits = new bool[UsageCoordinator.MaxWidgetTiles];
+        private bool[] tileFits = new bool[UsageCoordinator.InitialWidgetTileCount];
         // Has a provider, but is being held back this pass because the row would otherwise overflow. Only
         // ever the active tool's tile when that provider is not pinned.
-        private readonly bool[] tileSuppressed = new bool[UsageCoordinator.MaxWidgetTiles];
+        private bool[] tileSuppressed = new bool[UsageCoordinator.InitialWidgetTileCount];
         // Scratch buffers for one layout pass, held as fields because that pass runs on every usage publish
         // and on the 5s health tick. layoutSlots[0..count) are the occupied slot indices in render order.
-        private readonly int[] layoutSlots = new int[UsageCoordinator.MaxWidgetTiles];
-        private readonly int[] layoutWidths = new int[UsageCoordinator.MaxWidgetTiles];
+        private int[] layoutSlots = new int[UsageCoordinator.InitialWidgetTileCount];
+        private int[] layoutWidths = new int[UsageCoordinator.InitialWidgetTileCount];
         private ProviderId? activeTileProvider;
         // Where each shown provider sat in the last layout, so the next one can animate the difference.
         // Double-buffered and swapped each pass so a layout allocates no dictionary.
@@ -148,6 +144,7 @@ namespace TaskbarQuota.Taskbar
         private DesktopWindowXamlSource? host;
         private DesktopWindowXamlSource? activityHost;
         private Microsoft.UI.Xaml.FrameworkElement? hostContent;
+        private Microsoft.UI.Dispatching.DispatcherQueue? widgetDispatcher;
         private Microsoft.UI.Xaml.FrameworkElement? activityHostContent;
         // Show/hide cross-fade state. Short on purpose: the widget lives on the taskbar, so anything
         // slower reads as lag rather than as a transition.
@@ -327,6 +324,7 @@ namespace TaskbarQuota.Taskbar
                 RenderTransform = new Microsoft.UI.Xaml.Media.CompositeTransform(),
             };
             host.Content = hostContent;
+            widgetDispatcher = hostContent.DispatcherQueue;
             ResizeWidgetHost(WidgetWidthForMode(WidgetSettingsService.Current));
 
             InitializeActivityHost(taskbarRect);
@@ -778,19 +776,42 @@ namespace TaskbarQuota.Taskbar
                 VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Stretch,
             };
 
-            for (int i = 0; i < tiles.Length; i++)
-            {
-                if (i > 0)
-                {
-                    separators[i - 1] = CreateSeparator();
-                    panel.Children.Add(separators[i - 1]);
-                }
-
-                tiles[i] = CreateTile();
-                panel.Children.Add(tiles[i]);
-            }
+            AppendTiles(panel, 0);
 
             return panel;
+        }
+
+        private void AppendTiles(Microsoft.UI.Xaml.Controls.StackPanel panel, int start)
+        {
+            for (int i = start; i < tiles.Length; i++)
+            {
+                if (i > 0)
+                    separators[i - 1] = CreateSeparator();
+                tiles[i] = CreateTile();
+            }
+
+            for (int i = start; i < tiles.Length; i++)
+            {
+                if (i > 0)
+                    panel.Children.Add(separators[i - 1]);
+                panel.Children.Add(tiles[i]);
+            }
+        }
+
+        private void EnsureTileCapacity(int required)
+        {
+            if (required <= tiles.Length || summaryPanel is null)
+                return;
+
+            int previous = tiles.Length;
+            Array.Resize(ref tiles, required);
+            Array.Resize(ref separators, required - 1);
+            Array.Resize(ref tileProviders, required);
+            Array.Resize(ref tileFits, required);
+            Array.Resize(ref tileSuppressed, required);
+            Array.Resize(ref layoutSlots, required);
+            Array.Resize(ref layoutWidths, required);
+            AppendTiles(summaryPanel, previous);
         }
 
         private WidgetSummary CreateTile()
@@ -884,14 +905,14 @@ namespace TaskbarQuota.Taskbar
         /// <summary>
         /// Binds the tile slots to <paramref name="providers"/> in order (leftmost first) and re-lays out.
         /// The coordinator supplies an ordering-only candidate list; the manager applies the effective cap
-        /// after routing each display. The slot-pool <c>Take</c> remains a final safety boundary here.
+        /// after routing each display.
         /// </summary>
         public void SetDisplayProviders(IReadOnlyList<ProviderId> providers, ProviderId? activeProvider)
         {
             // A stale reconciliation callback must never bind the same provider into two slots. The
             // coordinator normally guarantees uniqueness, but normalizing at the widget boundary keeps
             // an out-of-order foreground update from briefly rendering duplicate quota tiles.
-            providers = providers.Distinct().Take(UsageCoordinator.MaxWidgetTiles).ToArray();
+            providers = providers.Distinct().ToArray();
 
             // Before Initialize() there are no tiles to bind. Hold the set instead of dropping it — the
             // manager re-sends only on a change, so a dropped first set never came back and the widget
@@ -902,6 +923,8 @@ namespace TaskbarQuota.Taskbar
                 pendingActiveProvider = activeProvider;
                 return;
             }
+
+            EnsureTileCapacity(providers.Count);
 
             activeTileProvider = activeProvider;
             activitySummary?.Apply(activitySnapshot, activeTileProvider);
@@ -952,12 +975,8 @@ namespace TaskbarQuota.Taskbar
         /// <summary>
         /// Lays the tiles out and resizes the host to the result.
         ///
-        /// Every tile renders exactly what the user configured — all of its rows, with their reset
-        /// countdowns. There is deliberately no reduced form: trimming a pinned provider is worse than
-        /// refusing the pin (issue #25), so keeping the row inside the bar is
-        /// <see cref="Services.PinBudgetService"/>'s job. The only concession made here is holding back the
-        /// unpinned active tile when it arrives beside a full pinned set and the row still overflows the
-        /// measured gap.
+        /// Unpinned tiles give way first when the measured gap is narrow. Pinned tiles then switch to the
+        /// percentages-only layout while keeping their rows and values.
         ///
         /// Widths are measured, never rendered: <see cref="WidgetSummary.MeasureDesiredWidth"/> is a pure
         /// calculation over the columns, whereas rendering to read a width restarted the tile's refresh
@@ -997,7 +1016,7 @@ namespace TaskbarQuota.Taskbar
 
                 Array.Clear(tileSuppressed);
 
-                // Slot and width buffers are fields, not locals: at most three tiles, and this pass runs on
+                // Slot and width buffers are fields, not locals: this pass runs on
                 // every usage publish and every 5s health tick across every taskbar.
                 int count = 0;
                 for (int i = 0; i < tiles.Length; i++)
@@ -1010,6 +1029,10 @@ namespace TaskbarQuota.Taskbar
                     ? AgentActivitySummary.MinimumLogicalWidth + ActivitySummaryMarginLogicalPx
                     : 0;
                 count = HoldBackTilesThatDoNotFit(layoutSlots, count, minimumActivityWidth);
+                bool compactPins = minimumActivityWidth + MeasureRow(layoutSlots, count) > availableLogicalWidth;
+                for (int i = 0; i < tiles.Length; i++)
+                    tiles[i].SetCompactForSpace(compactPins && tileProviders[i] is { } provider
+                        && WidgetSettingsService.IsProviderPinned(provider));
 
                 // Widths are measured, never rendered — MeasureDesiredWidth is a pure calculation.
                 // Rendering to measure made the tile restart its refresh animation on every usage publish,
@@ -1200,7 +1223,7 @@ namespace TaskbarQuota.Taskbar
             int total = 0;
             for (int n = 0; n < count; n++)
             {
-                total += tiles[slots[n]].MeasureDesiredWidth()
+                total += tiles[slots[n]].MeasureFullWidth()
                     + TileHorizontalMarginLogicalPx
                     + (n > 0 ? TileSeparatorLogicalPx : 0);
             }
@@ -1477,29 +1500,6 @@ namespace TaskbarQuota.Taskbar
             }
         }
 
-        private void SetActivityLogicalWidthOnUiThread(int logicalWidth, int physicalWidth)
-        {
-            var summary = activitySummary;
-            if (summary is null)
-                return;
-
-            var dispatcher = summary.DispatcherQueue;
-            if (dispatcher.HasThreadAccess)
-            {
-                summary.SetLogicalWidth(logicalWidth);
-                return;
-            }
-
-            if (!dispatcher.TryEnqueue(() =>
-                {
-                    if (!disposedValue && ActivityHostWidth == physicalWidth)
-                        summary.SetLogicalWidth(logicalWidth);
-                }))
-            {
-                Log.Warning("Could not enqueue adaptive activity width on the UI thread");
-            }
-        }
-
         private static int WidgetWidthForMode(WidgetDisplayMode mode) => mode switch
         {
             WidgetDisplayMode.PercentagesOnly => 220,
@@ -1531,7 +1531,7 @@ namespace TaskbarQuota.Taskbar
                 positionRunnerActive = true;
             }
 
-            _ = ProcessPositionUpdatesAsync();
+            _ = Task.Run(ProcessPositionUpdatesAsync);
         }
 
         private async Task ProcessPositionUpdatesAsync()
@@ -1731,7 +1731,6 @@ namespace TaskbarQuota.Taskbar
                     int physicalWidth = (int)Math.Ceiling(logicalWidth * dpiScale);
                     bool widthChanged = ActivityHostWidth != physicalWidth;
                     ActivityHostWidth = physicalWidth;
-                    SetActivityLogicalWidthOnUiThread(logicalWidth, physicalWidth);
                     if (widthChanged)
                         Log.Debug($"activity width adapted to {logicalWidth} logical px beside quota");
                 }
@@ -1747,45 +1746,58 @@ namespace TaskbarQuota.Taskbar
 
                 int offsetY = barRect.top;
                 cancellationToken.ThrowIfCancellationRequested();
-                var targetAppWindow = appWindow;
-                if (disposedValue || targetAppWindow is null || !IsAlive)
+                if (disposedValue || appWindow is null || !IsAlive)
                     return;
 
-                int previousQuotaOffsetX = currentOffsetX;
-                if (currentOffsetY != offsetY)
+                int activityX = pairPlacement is { } resolvedPair
+                    ? resolvedPair.ActivityX + (offsetX - resolvedPair.QuotaX)
+                    : int.MinValue;
+                int targetX = offsetX;
+                int targetY = offsetY;
+                int targetHeight = barRect.bottom - barRect.top;
+                int targetActivityWidth = ActivityHostWidth;
+                await RunOnWidgetDispatcherAsync(() =>
                 {
-                    targetAppWindow.MoveAndResize(new RectInt32(offsetX, offsetY, WidgetHostWidth, barRect.bottom - barRect.top));
-                    currentOffsetX = offsetX; currentOffsetY = offsetY;
-                }
-                else if (ShouldReposition(currentOffsetX, offsetX, RepositionDeadbandPx))
-                {
-                    targetAppWindow.Move(new PointInt32(offsetX, offsetY));
-                    currentOffsetX = offsetX;
-                }
-                if (previousQuotaOffsetX != int.MinValue && previousQuotaOffsetX != offsetX)
-                    AnimateLayoutSurface(hostContent, ref quotaLayoutStoryboard, previousQuotaOffsetX - offsetX);
+                    if (disposedValue || appWindow is null || IsUserRepositioning)
+                        return;
 
-                if (isActivityVisible && activityAppWindow is not null)
-                {
-                    if (pairPlacement is null)
+                    if (pairPlacement is { } adaptivePair)
+                        activitySummary?.SetLogicalWidth(Math.Clamp(
+                            (int)Math.Floor(adaptivePair.ActivityWidth / dpiScale),
+                            AgentActivitySummary.MinimumLogicalWidth,
+                            AgentActivitySummary.DesiredLogicalWidth));
+
+                    int previousQuotaOffsetX = currentOffsetX;
+                    if (currentOffsetY != targetY)
+                    {
+                        appWindow.MoveAndResize(new RectInt32(targetX, targetY, WidgetHostWidth, targetHeight));
+                        currentOffsetX = targetX;
+                        currentOffsetY = targetY;
+                    }
+                    else if (ShouldReposition(currentOffsetX, targetX, RepositionDeadbandPx))
+                    {
+                        appWindow.Move(new PointInt32(targetX, targetY));
+                        currentOffsetX = targetX;
+                    }
+                    if (previousQuotaOffsetX != int.MinValue && previousQuotaOffsetX != targetX)
+                        AnimateLayoutSurface(hostContent, ref quotaLayoutStoryboard, previousQuotaOffsetX - targetX);
+
+                    if (!isActivityVisible || activityAppWindow is null)
+                        return;
+                    if (activityX == int.MinValue)
                     {
                         Log.Debug("activity hidden: no taskbar lane can fit quota plus the minimum activity width");
                         SetActivityHostVisible(false);
                         return;
                     }
 
-                    var resolvedPair = pairPlacement.Value;
-                    // Keep the solver's saved/detached activity coordinate. If the final monitor clamp
-                    // nudged the quota by a few pixels, carry that same delta to the activity window so
-                    // the pair remains separated without collapsing back beside quota.
-                    int activityX = resolvedPair.ActivityX + (offsetX - resolvedPair.QuotaX);
                     int previousActivityOffsetX = activityOffsetX;
                     activityAppWindow.MoveAndResize(new RectInt32(
-                        activityX, offsetY, ActivityHostWidth, barRect.bottom - barRect.top));
+                        activityX, targetY, targetActivityWidth, targetHeight));
                     activityOffsetX = activityX;
                     if (previousActivityOffsetX != int.MinValue && previousActivityOffsetX != activityX)
                         AnimateLayoutSurface(activityHostContent, ref activityLayoutStoryboard, previousActivityOffsetX - activityX);
-                }
+                }, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -1800,6 +1812,42 @@ namespace TaskbarQuota.Taskbar
                 if (gateAcquired)
                     positionUpdateGate.Release();
             }
+        }
+
+        private Task RunOnWidgetDispatcherAsync(Action action, CancellationToken cancellationToken)
+        {
+            var dispatcher = widgetDispatcher ?? throw new InvalidOperationException("Widget dispatcher is unavailable.");
+            return DispatchPositionUpdateAsync(dispatcher.HasThreadAccess,
+                callback => dispatcher.TryEnqueue(() => callback()), action, cancellationToken);
+        }
+
+        internal static Task DispatchPositionUpdateAsync(
+            bool hasThreadAccess,
+            Func<Action, bool> tryEnqueue,
+            Action action,
+            CancellationToken cancellationToken)
+        {
+            if (hasThreadAccess)
+            {
+                action();
+                return Task.CompletedTask;
+            }
+
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!tryEnqueue(() =>
+                {
+                    try
+                    {
+                        action();
+                        completion.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        completion.TrySetException(ex);
+                    }
+                }))
+                completion.TrySetException(new InvalidOperationException("Could not enqueue widget position update."));
+            return completion.Task.WaitAsync(cancellationToken);
         }
 
         /// <summary>Deadband: ignore sub-threshold recompute deltas (rounding / transient tray width

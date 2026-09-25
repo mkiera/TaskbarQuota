@@ -365,7 +365,8 @@ namespace TaskbarQuota.Taskbar
 
             var coordinator = UsageCoordinator.Instance;
             var providers = coordinator.WidgetDisplayProviders
-                .Take(UsageCoordinator.MaxDisplayedWidgetTiles)
+                .Take(Math.Max(UsageCoordinator.MaxDisplayedWidgetTiles,
+                    coordinator.WidgetDisplayProviders.Count(WidgetSettingsService.IsProviderPinned)))
                 .ToArray();
             var activity = AgentActivityService.Instance.Snapshot;
 
@@ -392,7 +393,8 @@ namespace TaskbarQuota.Taskbar
 
             var coordinator = UsageCoordinator.Instance;
             var providers = coordinator.WidgetDisplayProviders
-                .Take(UsageCoordinator.MaxDisplayedWidgetTiles)
+                .Take(Math.Max(UsageCoordinator.MaxDisplayedWidgetTiles,
+                    coordinator.WidgetDisplayProviders.Count(WidgetSettingsService.IsProviderPinned)))
                 .ToArray();
 
             bool needsFetch = false;
@@ -552,7 +554,6 @@ namespace TaskbarQuota.Taskbar
                         SyncFloatingState();
 
                     RefreshPinnedTiles();
-                    Services.PinBudgetService.EnforceBudget();
                     return;
                 }
 
@@ -566,11 +567,6 @@ namespace TaskbarQuota.Taskbar
                     EnsureWidgets();
                 }
                 RefreshPinnedTiles();
-                // The free span is only known once a widget has measured it, so a set pinned before that
-                // (or pinned when the bar was emptier) is reconciled here rather than rendering badly.
-                // EnforceBudget observes every tick so its hysteresis can distinguish a stable overflow from
-                // a transient geometry report.
-                Services.PinBudgetService.EnforceBudget();
                 // Re-run the tile-fit math against the gap the last position pass measured, so tiles that
                 // were trimmed off a crowded taskbar come back once there is room for them again.
                 // Iterated over the reused buffer rather than Widgets.Values.ToArray(), which allocated an
@@ -738,7 +734,8 @@ namespace TaskbarQuota.Taskbar
                     : ResolveDisplayKey(WidgetSettingsService.GetAdaptiveProviderDisplay(provider)),
                 WidgetSettingsService.IsProviderPinned,
                 provider => ResolveDisplayKey(WidgetSettingsService.GetPinnedProviderDisplay(provider)),
-                UsageCoordinator.MaxDisplayedWidgetTiles);
+                Math.Max(UsageCoordinator.MaxDisplayedWidgetTiles,
+                    providers.Count(WidgetSettingsService.IsProviderPinned)));
         }
 
         private static ProviderId? ActiveProviderForWidget(
@@ -1000,6 +997,9 @@ namespace TaskbarQuota.Taskbar
         /// </summary>
         private static UsageResult? HydrateResult(UsageCoordinator coordinator, ProviderId provider)
         {
+            if (WidgetSettingsService.IsProviderPinned(provider)
+                && coordinator.Service.TryGetLastSuccessfulLiveResult(provider, out var pinnedValue))
+                return pinnedValue;
             if (coordinator.Service.TryGetCached(provider, out var cached))
                 return cached;
             // A failed refresh is cached deliberately. Prefer that current failure over LastState,

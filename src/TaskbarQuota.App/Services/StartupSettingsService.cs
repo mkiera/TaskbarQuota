@@ -1,5 +1,7 @@
 using System;
+using System.Threading.Tasks;
 using Microsoft.Win32;
+using Windows.ApplicationModel;
 
 namespace TaskbarQuota;
 
@@ -8,11 +10,30 @@ public static class StartupSettingsService
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "TaskbarQuota";
     private const string LegacyRunValueName = "WinCheck";
+    internal const string StartupTaskId = "TaskbarQuotaStartup";
     public const string StartupArgument = "--startup-widget";
+
+    internal static bool HasPackageIdentity
+    {
+        get
+        {
+            try
+            {
+                return !string.IsNullOrEmpty(Package.Current.Id.FullName);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+    }
 
     /// <summary>Moves a WinCheck startup entry to TaskbarQuota after rename.</summary>
     public static void MigrateLegacyStartupEntryIfNeeded()
     {
+        if (HasPackageIdentity)
+            return;
+
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
@@ -24,14 +45,26 @@ public static class StartupSettingsService
 
             key.DeleteValue(LegacyRunValueName, throwOnMissingValue: false);
             if (key.GetValue(RunValueName) is null)
-                Apply(true);
+                ApplyRunKey(true);
         }
         catch
         {
         }
     }
 
-    public static bool IsEnabled
+    public static async Task<bool> IsEnabledAsync()
+    {
+        if (!HasPackageIdentity)
+            return IsRunKeyEnabled;
+
+        var task = await StartupTask.GetAsync(StartupTaskId);
+        return IsEnabledState(task.State);
+    }
+
+    internal static bool IsEnabledState(StartupTaskState state)
+        => state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+
+    private static bool IsRunKeyEnabled
     {
         get
         {
@@ -39,7 +72,7 @@ public static class StartupSettingsService
             {
                 using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
                 return key?.GetValue(RunValueName) is string value
-                    && value.Contains(StartupArgument, StringComparison.OrdinalIgnoreCase);
+                    && IsRunValueForExecutable(value, Environment.ProcessPath);
             }
             catch
             {
@@ -48,7 +81,27 @@ public static class StartupSettingsService
         }
     }
 
-    public static void Apply(bool enabled)
+    public static async Task<bool> ApplyAsync(bool enabled)
+    {
+        if (!HasPackageIdentity)
+        {
+            ApplyRunKey(enabled);
+            return IsRunKeyEnabled;
+        }
+
+        var task = await StartupTask.GetAsync(StartupTaskId);
+        if (enabled && task.State == StartupTaskState.Disabled)
+            return IsEnabledState(await task.RequestEnableAsync());
+        if (!enabled && task.State == StartupTaskState.Enabled)
+            task.Disable();
+        return IsEnabledState((await StartupTask.GetAsync(StartupTaskId)).State);
+    }
+
+    internal static bool IsRunValueForExecutable(string value, string? executable)
+        => !string.IsNullOrWhiteSpace(executable)
+            && string.Equals(value.Trim(), $"\"{executable}\" {StartupArgument}", StringComparison.OrdinalIgnoreCase);
+
+    private static void ApplyRunKey(bool enabled)
     {
         try
         {

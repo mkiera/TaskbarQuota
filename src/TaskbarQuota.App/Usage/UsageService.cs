@@ -18,6 +18,7 @@ namespace TaskbarQuota.Usage
         private readonly Dictionary<ProviderId, IUsageProvider> _providers = new();
         private readonly Dictionary<ProviderId, CacheEntry> _cache = new();
         private readonly Dictionary<ProviderId, UsageResult> _lastSuccessfulLiveResults = new();
+        private readonly HashSet<ProviderId> _historyRefreshRequested = new();
         private readonly object _lock = new();
         private readonly string? _snapshotDirectory;
         private long _nextObservationSequence;
@@ -92,7 +93,15 @@ namespace TaskbarQuota.Usage
             lock (_lock)
             {
                 if (!force && TryGetValidEntry(id, out var cached))
-                    return AttachLocalHistory(id, cached.Result.AsMemoryCache());
+                {
+                    bool needsRemoteHistory = id == ProviderId.Cursor
+                        && UsageHistoryService.IsEnabled
+                        && cached.Result.Ok
+                        && cached.Result.Fetch?.Usage.UsageHistory is null
+                        && _historyRefreshRequested.Add(id);
+                    if (!needsRemoteHistory)
+                        return AttachLocalHistory(id, cached.Result.AsMemoryCache());
+                }
             }
 
             var observationSequence = Interlocked.Increment(ref _nextObservationSequence);
@@ -131,7 +140,8 @@ namespace TaskbarQuota.Usage
             }
             catch (ProviderException pe)
             {
-                if (ShouldReuseLastSuccessfulResult(pe.Kind) && TryGetLastSuccessfulLiveResult(id, out var lastSuccess))
+                if ((ShouldReuseLastSuccessfulResult(pe.Kind) || WidgetSettingsService.IsProviderPinned(id))
+                    && TryGetLastSuccessfulLiveResult(id, out var lastSuccess))
                 {
                     var fallback = lastSuccess.AsFailureFallback(observationSequence, DateTimeOffset.Now);
                     Store(id, fallback, FetchCachePolicy.TtlForFailure(pe.Kind));

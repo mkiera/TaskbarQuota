@@ -123,18 +123,14 @@ namespace TaskbarQuota
             }
         }
 
-        /// <summary>
-        /// Maximum number of quota tile slots allocated by the widget. The effective display cap is lower
-        /// while the activity widget is enabled because the activity island occupies the same taskbar area.
-        /// </summary>
-        public const int MaxWidgetTiles = 3;
+        public const int InitialWidgetTileCount = 3;
 
         /// <summary>Effective quota-tile cap: three tiles normally, or two while the activity island is shown.</summary>
         public static int MaxDisplayedWidgetTiles =>
-            WidgetSettingsService.ShowAgentActivityInWidget ? 2 : MaxWidgetTiles;
+            WidgetSettingsService.ShowAgentActivityInWidget ? 2 : 3;
 
         /// <summary>
-        /// Every provider the taskbar should consider rendering, left to right: visible and available PINNED
+        /// Every provider the taskbar should consider rendering, left to right: PINNED
         /// providers first (most recently active first, then enum order), followed by the active provider
         /// when visible and not already present. This is an ordering-only candidate list; each routed display
         /// applies its own effective tile cap. So with Claude pinned + Z.AI pinned and Codex active you get
@@ -167,7 +163,7 @@ namespace TaskbarQuota
                 recentIndex.TryAdd(recent[i], i);
 
             var pinned = ordered
-                .Where(p => isPinned(p) && isVisible(p) && isAvailable(p))
+                .Where(p => isPinned(p) && isVisible(p))
                 .OrderBy(p => recentIndex.TryGetValue(p, out int index) ? index : int.MaxValue)
                 .ToList();
 

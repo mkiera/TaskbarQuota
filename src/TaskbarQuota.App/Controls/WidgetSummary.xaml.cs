@@ -98,6 +98,7 @@ namespace TaskbarQuota.Controls
         private readonly List<RenderedRow> _renderedRows = new();
         private List<WidgetUsageRow> _rows = new();
         private bool _forcePercentagesOnly;
+        private bool _compactForSpace;
         private UsageResult? _lastResult;
         private ProviderId? _lastAppliedProvider;
         private AgentActivityStatus? _agentStatus;
@@ -129,9 +130,6 @@ namespace TaskbarQuota.Controls
                 _ => fullName,
             };
 
-        /// <summary>Rows this tile shows. A pinned provider always renders exactly what the user configured
-        /// (issue #25); keeping the row inside the bar is <see cref="PinBudgetService"/>'s job, not this
-        /// control's, so there is no reduced form to fall back to.</summary>
         public int RowCount => Math.Max(1, _rows.Count);
 
         /// <summary>
@@ -145,7 +143,19 @@ namespace TaskbarQuota.Controls
         public int MeasureDesiredWidth()
             => CalculateDesiredWidth(
                 CurrentRows(),
+                _forcePercentagesOnly || _compactForSpace ? WidgetDisplayMode.PercentagesOnly : WidgetSettingsService.Current);
+
+        public int MeasureFullWidth()
+            => CalculateDesiredWidth(CurrentRows(),
                 _forcePercentagesOnly ? WidgetDisplayMode.PercentagesOnly : WidgetSettingsService.Current);
+
+        public void SetCompactForSpace(bool compact)
+        {
+            if (_compactForSpace == compact)
+                return;
+            _compactForSpace = compact;
+            RenderRows();
+        }
 
         public HorizontalAlignment ElementsAlignment
         {
@@ -1236,7 +1246,7 @@ namespace TaskbarQuota.Controls
 
         private void RenderRows()
         {
-            var mode = _forcePercentagesOnly ? WidgetDisplayMode.PercentagesOnly : WidgetSettingsService.Current;
+            var mode = _forcePercentagesOnly || _compactForSpace ? WidgetDisplayMode.PercentagesOnly : WidgetSettingsService.Current;
 
             ClearDynamicContent();
             ConfigureStaticColumns(mode);

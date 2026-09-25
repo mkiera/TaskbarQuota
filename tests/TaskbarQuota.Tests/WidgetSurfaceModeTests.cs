@@ -1,5 +1,3 @@
-using TaskbarQuota.Services;
-
 namespace TaskbarQuota.Tests;
 
 [Collection(WidgetRowSettingsCollection.Name)]
@@ -47,7 +45,6 @@ public class WidgetSurfaceModeTests
 
             WidgetSettingsService.ApplySurface(WidgetSurfaceMode.Floating);
             Assert.Equal(WidgetSurfaceMode.Floating, WidgetSettingsService.CurrentSurface);
-            Assert.Equal(int.MaxValue, PinBudgetService.AvailableLogicalWidth);
             Assert.Equal("1", File.ReadAllText(Path.Combine(directory, "widget-surface-mode.txt")));
 
             WidgetSettingsService.ReloadSurfaceSettingsForTesting();

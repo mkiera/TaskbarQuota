@@ -293,7 +293,9 @@ namespace TaskbarQuota
                 AgentActivityService.Instance.AcknowledgeAll();
             _showingActivity = false;
             _showingCost = false;
+            UsageHistoryService.Enable();
             EnsureDashboardLoaded();
+            _ = _dashboardViewModel.LoadAsync();
             ActivityPanel.Visibility = Visibility.Collapsed;
             ContentFrame.Visibility = Visibility.Visible;
             ScheduleFlyoutBoundsUpdate();
