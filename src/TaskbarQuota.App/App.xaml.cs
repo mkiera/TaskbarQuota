@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 using TaskbarQuota.Diagnostics;
 using TaskbarQuota.Interop;
 using TaskbarQuota.Services;
@@ -44,7 +45,7 @@ namespace TaskbarQuota
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
             Dispatcher = DispatcherQueue.GetForCurrentThread();
-            RegisterForWindowsRestart(IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs()));
+            RegisterForWindowsRestart(IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs(), Program.InitialActivationKind));
             AppStorage.MigrateLegacyDataIfNeeded();
             StartupSettingsService.MigrateLegacyStartupEntryIfNeeded();
 
@@ -70,7 +71,7 @@ namespace TaskbarQuota
             };
             updateTimer.Start();
 
-            if (!IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs()))
+            if (!IsWidgetStartup(args.Arguments, Environment.GetCommandLineArgs(), Program.InitialActivationKind))
             {
                 try
                 {
@@ -119,9 +120,11 @@ namespace TaskbarQuota
         /// <summary>Handles an activation that a second process redirected to this instance
         /// (Start menu, Microsoft Store "Open", another double-click). Surfaces the existing
         /// window instead of letting a duplicate widget appear.</summary>
-        internal static void HandleRedirectedActivation(string? activationArguments)
+        internal static void HandleRedirectedActivation(
+            string? activationArguments,
+            ExtendedActivationKind activationKind = ExtendedActivationKind.Launch)
         {
-            if (!ShouldSurfaceWindowOnActivation(activationArguments))
+            if (!ShouldSurfaceWindowOnActivation(activationArguments, activationKind))
                 return;
 
             var dispatcher = Dispatcher;
@@ -136,8 +139,10 @@ namespace TaskbarQuota
 
         /// <summary>A redirected startup-widget launch must stay in the tray, matching the
         /// behaviour of a cold start with the same argument.</summary>
-        internal static bool ShouldSurfaceWindowOnActivation(string? activationArguments)
-            => !IsWidgetStartup(activationArguments);
+        internal static bool ShouldSurfaceWindowOnActivation(
+            string? activationArguments,
+            ExtendedActivationKind activationKind = ExtendedActivationKind.Launch)
+            => !IsWidgetStartup(activationArguments, activationKind: activationKind);
 
         private void ScheduleTaskbarInitialization()
         {
@@ -228,8 +233,14 @@ namespace TaskbarQuota
         internal static bool ShouldRetryTaskbarInitialization(int completedAttempts)
             => completedAttempts < TaskbarInitializationMaxAttempts;
 
-        internal static bool IsWidgetStartup(string? activationArguments, string[]? commandLineArguments = null)
+        internal static bool IsWidgetStartup(
+            string? activationArguments,
+            string[]? commandLineArguments = null,
+            ExtendedActivationKind activationKind = ExtendedActivationKind.Launch)
         {
+            if (activationKind == ExtendedActivationKind.StartupTask)
+                return true;
+
             if (ContainsStartupArgument(activationArguments))
                 return true;
 
