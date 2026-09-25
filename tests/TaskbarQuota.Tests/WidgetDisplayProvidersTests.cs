@@ -5,7 +5,7 @@ using TaskbarQuota.Usage;
 namespace TaskbarQuota.Tests;
 
 /// <summary>
-/// Ordering rules for the taskbar's multi-provider candidate list (issue #88): visible, available pins lead
+/// Ordering rules for the taskbar's multi-provider candidate list (issue #88): visible pins lead
 /// most-recently-active first, followed by the active provider when visible and not already present. The
 /// per-display cap is applied after routing.
 /// </summary>
@@ -73,13 +73,13 @@ public class WidgetDisplayProvidersTests
     }
 
     [Fact]
-    public void PinnedProvidersRemainCandidatesWhenHiddenOrUnavailable()
+    public void HiddenPinsAreDroppedButUnavailablePinsRemainCandidates()
     {
         var hidden = Compute(
             active: ProviderId.Codex,
             pinned: new[] { ProviderId.Claude },
             isVisible: p => p != ProviderId.Claude);
-        Assert.Equal(new[] { ProviderId.Claude, ProviderId.Codex }, hidden);
+        Assert.Equal(new[] { ProviderId.Codex }, hidden);
 
         var unavailable = Compute(
             active: ProviderId.Codex,

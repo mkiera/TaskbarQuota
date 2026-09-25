@@ -123,12 +123,7 @@ namespace TaskbarQuota
             }
         }
 
-        /// <summary>
-        /// Maximum number of quota tile slots allocated by the widget. The effective display cap is lower
-        /// while the activity widget is enabled because the activity island occupies the same taskbar area.
-        /// </summary>
-        // The pool must hold every ProviderId so a pin is never excluded by slot count.
-        public const int MaxWidgetTiles = 13;
+        public const int InitialWidgetTileCount = 3;
 
         /// <summary>Effective quota-tile cap: three tiles normally, or two while the activity island is shown.</summary>
         public static int MaxDisplayedWidgetTiles =>
@@ -168,7 +163,7 @@ namespace TaskbarQuota
                 recentIndex.TryAdd(recent[i], i);
 
             var pinned = ordered
-                .Where(p => isPinned(p))
+                .Where(p => isPinned(p) && isVisible(p))
                 .OrderBy(p => recentIndex.TryGetValue(p, out int index) ? index : int.MaxValue)
                 .ToList();
 

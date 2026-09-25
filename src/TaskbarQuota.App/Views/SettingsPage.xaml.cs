@@ -315,7 +315,6 @@ namespace TaskbarQuota.Views
                 return;
             }
 
-            PinBlockedBar.IsOpen = false;
             ViewModel.ApplyPinned(item, option.IsPinned);
             // The normal-mode "Pinned" option has no destination semantics and must preserve the saved
             // adaptive destination. In adaptive mode, an empty destination deliberately means follow app.

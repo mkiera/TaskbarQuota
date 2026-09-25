@@ -35,9 +35,9 @@ public sealed partial class QuotaWidgetContent : UserControl
     /// </summary>
     private static readonly TimeSpan EmptyActivityGrace = TimeSpan.FromMilliseconds(900);
 
-    private readonly WidgetSummary[] _tiles = new WidgetSummary[UsageCoordinator.MaxWidgetTiles];
-    private readonly TextBlock[] _separators = new TextBlock[UsageCoordinator.MaxWidgetTiles - 1];
-    private readonly ProviderId?[] _tileProviders = new ProviderId?[UsageCoordinator.MaxWidgetTiles];
+    private WidgetSummary[] _tiles = new WidgetSummary[UsageCoordinator.InitialWidgetTileCount];
+    private TextBlock[] _separators = new TextBlock[UsageCoordinator.InitialWidgetTileCount - 1];
+    private ProviderId?[] _tileProviders = new ProviderId?[UsageCoordinator.InitialWidgetTileCount];
     private ProviderId? _activeProvider;
     private AgentActivitySnapshot _activitySnapshot = new(Array.Empty<AgentActivityItem>());
     private AgentActivitySnapshot? _pendingEmptyActivitySnapshot;
@@ -130,21 +130,38 @@ public sealed partial class QuotaWidgetContent : UserControl
             return;
 
         QuotaPanel.Children.Clear();
-        for (int i = 0; i < _tiles.Length; i++)
+        AppendTiles(0);
+        _built = true;
+    }
+
+    private void AppendTiles(int start)
+    {
+        for (int i = start; i < _tiles.Length; i++)
         {
             if (i > 0)
-            {
-                var separator = CreateSeparator();
-                _separators[i - 1] = separator;
-                QuotaPanel.Children.Add(separator);
-            }
+                _separators[i - 1] = CreateSeparator();
 
-            var tile = CreateTile();
-            _tiles[i] = tile;
-            QuotaPanel.Children.Add(tile);
+            _tiles[i] = CreateTile();
         }
 
-        _built = true;
+        for (int i = start; i < _tiles.Length; i++)
+        {
+            if (i > 0)
+                QuotaPanel.Children.Add(_separators[i - 1]);
+            QuotaPanel.Children.Add(_tiles[i]);
+        }
+    }
+
+    private void EnsureTileCapacity(int required)
+    {
+        if (required <= _tiles.Length)
+            return;
+
+        int previous = _tiles.Length;
+        Array.Resize(ref _tiles, required);
+        Array.Resize(ref _separators, required - 1);
+        Array.Resize(ref _tileProviders, required);
+        AppendTiles(previous);
     }
 
     private WidgetSummary CreateTile()
@@ -213,11 +230,13 @@ public sealed partial class QuotaWidgetContent : UserControl
 
     public void SetDisplayProviders(IReadOnlyList<ProviderId> providers, ProviderId? activeProvider)
     {
-        providers = providers.Distinct().Take(UsageCoordinator.MaxWidgetTiles).ToArray();
+        providers = providers.Distinct().ToArray();
         _activeProvider = activeProvider;
 
         if (!_built)
             BuildTiles();
+
+        EnsureTileCapacity(providers.Count);
 
         for (int i = 0; i < _tiles.Length; i++)
         {
@@ -347,7 +366,7 @@ public sealed partial class QuotaWidgetContent : UserControl
 
         bool showActivity = HasVisibleActivity;
 
-        var tileWidths = new List<int>(UsageCoordinator.MaxWidgetTiles);
+        var tileWidths = new List<int>(_tiles.Length);
         for (int i = 0; i < _tiles.Length; i++)
         {
             bool shown = _tileProviders[i] is not null;

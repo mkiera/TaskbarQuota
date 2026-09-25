@@ -488,7 +488,6 @@ namespace TaskbarQuota.Views
             bool pinHere = _pinHereDisplayKey.Length > 0
                 && WidgetSettingsService.CurrentSurface == WidgetSurfaceMode.Taskbar
                 && WidgetSettingsService.CurrentTaskbarPlacement == TaskbarPlacementMode.Adaptive;
-            PinBlockedTip.IsOpen = false;
 
             if (wantPinned)
                 ProviderDiscoveryService.SetWidgetVisibilityPreference(card.ProviderId, true);

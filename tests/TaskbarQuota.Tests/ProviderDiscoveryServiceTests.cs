@@ -188,6 +188,22 @@ public class ProviderDiscoveryServiceTests
     }
 
     [Fact]
+    public void SyncInstalledProviderVisibility_KeepsPinnedExplicitlyDisabledProviderHidden()
+    {
+        ProviderInstallDetector.IsInstalledOverrideForTesting = id => id == ProviderId.Grok;
+        ProviderDiscoveryService.DisableProvider(ProviderId.Grok);
+        WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Grok, true);
+
+        ProviderDiscoveryService.SyncInstalledProviderVisibility();
+        ProviderDiscoveryService.SyncInstalledProviderVisibility();
+
+        Assert.True(WidgetSettingsService.IsProviderPinned(ProviderId.Grok));
+        Assert.False(WidgetSettingsService.IsProviderDashboardVisible(ProviderId.Grok));
+        Assert.False(WidgetSettingsService.IsProviderVisible(ProviderId.Grok));
+        Assert.False(ProviderDiscoveryService.ShouldFetch(ProviderId.Grok, active: null));
+    }
+
+    [Fact]
     public void SyncInstalledProviderVisibility_HidesStaleNotInstalledProvider()
     {
         WidgetSettingsService.SetProviderVisibleForTesting(ProviderId.Grok, true);

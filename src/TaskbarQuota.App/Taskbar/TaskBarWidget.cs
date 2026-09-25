@@ -104,29 +104,25 @@ namespace TaskbarQuota.Taskbar
         private AppWindow? appWindow;
         private IntPtr activityHwnd;
         private AppWindow? activityAppWindow;
-        // Fixed pool of tile slots, created once and reused. Slot i renders tileProviders[i]; reassigning a
-        // slot to another provider re-renders it through WidgetSummary's normal provider-switch path. A
-        // fixed pool means the panel's children never change, so no tile is ever unloaded and re-loaded
-        // (which would drop its WidgetSettingsService subscription) when the display order shifts.
-        private readonly WidgetSummary[] tiles = new WidgetSummary[UsageCoordinator.MaxWidgetTiles];
+        private WidgetSummary[] tiles = new WidgetSummary[UsageCoordinator.InitialWidgetTileCount];
         private AgentActivitySummary? activitySummary;
         private AgentActivitySnapshot activitySnapshot = new(Array.Empty<AgentActivityItem>());
         private AgentActivitySnapshot? pendingEmptyActivitySnapshot;
         private readonly Microsoft.UI.Xaml.DispatcherTimer activityEmptySnapshotTimer;
         // separators[i] is the "|" divider between slot i and slot i+1.
-        private readonly Microsoft.UI.Xaml.Controls.TextBlock[] separators =
-            new Microsoft.UI.Xaml.Controls.TextBlock[UsageCoordinator.MaxWidgetTiles - 1];
-        private readonly ProviderId?[] tileProviders = new ProviderId?[UsageCoordinator.MaxWidgetTiles];
+        private Microsoft.UI.Xaml.Controls.TextBlock[] separators =
+            new Microsoft.UI.Xaml.Controls.TextBlock[UsageCoordinator.InitialWidgetTileCount - 1];
+        private ProviderId?[] tileProviders = new ProviderId?[UsageCoordinator.InitialWidgetTileCount];
         // Slot has a provider AND fits inside the measured taskbar gap. A pinned tile is never suppressed;
         // the active tile is the courtesy tile that gives way when the pins fill the gap.
-        private readonly bool[] tileFits = new bool[UsageCoordinator.MaxWidgetTiles];
+        private bool[] tileFits = new bool[UsageCoordinator.InitialWidgetTileCount];
         // Has a provider, but is being held back this pass because the row would otherwise overflow. Only
         // ever the active tool's tile when that provider is not pinned.
-        private readonly bool[] tileSuppressed = new bool[UsageCoordinator.MaxWidgetTiles];
+        private bool[] tileSuppressed = new bool[UsageCoordinator.InitialWidgetTileCount];
         // Scratch buffers for one layout pass, held as fields because that pass runs on every usage publish
         // and on the 5s health tick. layoutSlots[0..count) are the occupied slot indices in render order.
-        private readonly int[] layoutSlots = new int[UsageCoordinator.MaxWidgetTiles];
-        private readonly int[] layoutWidths = new int[UsageCoordinator.MaxWidgetTiles];
+        private int[] layoutSlots = new int[UsageCoordinator.InitialWidgetTileCount];
+        private int[] layoutWidths = new int[UsageCoordinator.InitialWidgetTileCount];
         private ProviderId? activeTileProvider;
         // Where each shown provider sat in the last layout, so the next one can animate the difference.
         // Double-buffered and swapped each pass so a layout allocates no dictionary.
@@ -780,19 +776,42 @@ namespace TaskbarQuota.Taskbar
                 VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Stretch,
             };
 
-            for (int i = 0; i < tiles.Length; i++)
-            {
-                if (i > 0)
-                {
-                    separators[i - 1] = CreateSeparator();
-                    panel.Children.Add(separators[i - 1]);
-                }
-
-                tiles[i] = CreateTile();
-                panel.Children.Add(tiles[i]);
-            }
+            AppendTiles(panel, 0);
 
             return panel;
+        }
+
+        private void AppendTiles(Microsoft.UI.Xaml.Controls.StackPanel panel, int start)
+        {
+            for (int i = start; i < tiles.Length; i++)
+            {
+                if (i > 0)
+                    separators[i - 1] = CreateSeparator();
+                tiles[i] = CreateTile();
+            }
+
+            for (int i = start; i < tiles.Length; i++)
+            {
+                if (i > 0)
+                    panel.Children.Add(separators[i - 1]);
+                panel.Children.Add(tiles[i]);
+            }
+        }
+
+        private void EnsureTileCapacity(int required)
+        {
+            if (required <= tiles.Length || summaryPanel is null)
+                return;
+
+            int previous = tiles.Length;
+            Array.Resize(ref tiles, required);
+            Array.Resize(ref separators, required - 1);
+            Array.Resize(ref tileProviders, required);
+            Array.Resize(ref tileFits, required);
+            Array.Resize(ref tileSuppressed, required);
+            Array.Resize(ref layoutSlots, required);
+            Array.Resize(ref layoutWidths, required);
+            AppendTiles(summaryPanel, previous);
         }
 
         private WidgetSummary CreateTile()
@@ -886,14 +905,14 @@ namespace TaskbarQuota.Taskbar
         /// <summary>
         /// Binds the tile slots to <paramref name="providers"/> in order (leftmost first) and re-lays out.
         /// The coordinator supplies an ordering-only candidate list; the manager applies the effective cap
-        /// after routing each display. The slot-pool <c>Take</c> remains a final safety boundary here.
+        /// after routing each display.
         /// </summary>
         public void SetDisplayProviders(IReadOnlyList<ProviderId> providers, ProviderId? activeProvider)
         {
             // A stale reconciliation callback must never bind the same provider into two slots. The
             // coordinator normally guarantees uniqueness, but normalizing at the widget boundary keeps
             // an out-of-order foreground update from briefly rendering duplicate quota tiles.
-            providers = providers.Distinct().Take(UsageCoordinator.MaxWidgetTiles).ToArray();
+            providers = providers.Distinct().ToArray();
 
             // Before Initialize() there are no tiles to bind. Hold the set instead of dropping it — the
             // manager re-sends only on a change, so a dropped first set never came back and the widget
@@ -904,6 +923,8 @@ namespace TaskbarQuota.Taskbar
                 pendingActiveProvider = activeProvider;
                 return;
             }
+
+            EnsureTileCapacity(providers.Count);
 
             activeTileProvider = activeProvider;
             activitySummary?.Apply(activitySnapshot, activeTileProvider);
@@ -995,7 +1016,7 @@ namespace TaskbarQuota.Taskbar
 
                 Array.Clear(tileSuppressed);
 
-                // Slot and width buffers are fields, not locals: at most three tiles, and this pass runs on
+                // Slot and width buffers are fields, not locals: this pass runs on
                 // every usage publish and every 5s health tick across every taskbar.
                 int count = 0;
                 for (int i = 0; i < tiles.Length; i++)

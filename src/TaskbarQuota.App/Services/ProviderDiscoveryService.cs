@@ -47,7 +47,7 @@ public static class ProviderDiscoveryService
             bool dashboardChanged = false;
             foreach (ProviderId id in Enum.GetValues<ProviderId>())
             {
-                if (ExplicitlyDisabled.Contains(id) && !WidgetSettingsService.IsProviderPinned(id))
+                if (ExplicitlyDisabled.Contains(id))
                     continue;
 
                 if (ProviderInstallDetector.IsInstalled(id))
