@@ -144,8 +144,7 @@ namespace TaskbarQuota.Usage
             }
             catch (ProviderException pe)
             {
-                if ((ShouldReuseLastSuccessfulResult(pe.Kind) || WidgetSettingsService.IsProviderPinned(id))
-                    && TryGetLastSuccessfulLiveResult(id, out var lastSuccess))
+                if (ShouldReuseLastSuccessfulResult(pe.Kind) && TryGetLastSuccessfulLiveResult(id, out var lastSuccess))
                 {
                     var fallback = lastSuccess.AsFailureFallback(observationSequence, DateTimeOffset.Now);
                     Store(id, fallback, FetchCachePolicy.TtlForFailure(pe.Kind));

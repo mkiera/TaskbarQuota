@@ -975,8 +975,8 @@ namespace TaskbarQuota.Taskbar
         /// <summary>
         /// Lays the tiles out and resizes the host to the result.
         ///
-        /// Unpinned tiles give way first when the measured gap is narrow. Pinned tiles then switch to the
-        /// percentages-only layout while keeping their rows and values.
+        /// Every tile renders what the user configured. Only the unpinned active tile gives way when the
+        /// row overflows the measured gap. Pinned tiles always render in full.
         ///
         /// Widths are measured, never rendered: <see cref="WidgetSummary.MeasureDesiredWidth"/> is a pure
         /// calculation over the columns, whereas rendering to read a width restarted the tile's refresh
@@ -1029,10 +1029,6 @@ namespace TaskbarQuota.Taskbar
                     ? AgentActivitySummary.MinimumLogicalWidth + ActivitySummaryMarginLogicalPx
                     : 0;
                 count = HoldBackTilesThatDoNotFit(layoutSlots, count, minimumActivityWidth);
-                bool compactPins = minimumActivityWidth + MeasureRow(layoutSlots, count) > availableLogicalWidth;
-                for (int i = 0; i < tiles.Length; i++)
-                    tiles[i].SetCompactForSpace(compactPins && tileProviders[i] is { } provider
-                        && WidgetSettingsService.IsProviderPinned(provider));
 
                 // Widths are measured, never rendered — MeasureDesiredWidth is a pure calculation.
                 // Rendering to measure made the tile restart its refresh animation on every usage publish,
@@ -1223,7 +1219,7 @@ namespace TaskbarQuota.Taskbar
             int total = 0;
             for (int n = 0; n < count; n++)
             {
-                total += tiles[slots[n]].MeasureFullWidth()
+                total += tiles[slots[n]].MeasureDesiredWidth()
                     + TileHorizontalMarginLogicalPx
                     + (n > 0 ? TileSeparatorLogicalPx : 0);
             }

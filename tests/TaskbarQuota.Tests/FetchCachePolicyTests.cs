@@ -143,32 +143,6 @@ public class FetchCachePolicyTests
     }
 
     [Fact]
-    public async Task FetchAsync_UnavailablePinnedProviderKeepsLastKnownValue()
-    {
-        bool wasPinned = WidgetSettingsService.IsProviderPinned(ProviderId.Claude);
-        try
-        {
-            WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Claude, true);
-            var service = new UsageService();
-            var provider = new FlakyProvider();
-            service.Register(provider);
-
-            var first = await service.FetchAsync(ProviderId.Claude, force: true);
-            provider.NextException = new ProviderException(ProviderErrorKind.NotInstalled, "Not installed");
-            var second = await service.FetchAsync(ProviderId.Claude, force: true);
-
-            Assert.True(first.Ok);
-            Assert.True(second.Ok);
-            Assert.Equal(UsageObservationOrigin.FailureFallback, second.ObservationOrigin);
-            Assert.Equal(42, second.Fetch!.Usage.Primary.UsedPercent);
-        }
-        finally
-        {
-            WidgetSettingsService.SetProviderPinnedForTesting(ProviderId.Claude, wasPinned);
-        }
-    }
-
-    [Fact]
     public async Task FetchAsync_SameLiveUsage_ReturnsPreviousSuccessfulResult()
     {
         var service = new UsageService();

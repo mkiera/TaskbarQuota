@@ -997,9 +997,6 @@ namespace TaskbarQuota.Taskbar
         /// </summary>
         private static UsageResult? HydrateResult(UsageCoordinator coordinator, ProviderId provider)
         {
-            if (WidgetSettingsService.IsProviderPinned(provider)
-                && coordinator.Service.TryGetLastSuccessfulLiveResult(provider, out var pinnedValue))
-                return pinnedValue;
             if (coordinator.Service.TryGetCached(provider, out var cached))
                 return cached;
             // A failed refresh is cached deliberately. Prefer that current failure over LastState,
