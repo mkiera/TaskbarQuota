@@ -148,6 +148,7 @@ namespace TaskbarQuota.Taskbar
         private DesktopWindowXamlSource? host;
         private DesktopWindowXamlSource? activityHost;
         private Microsoft.UI.Xaml.FrameworkElement? hostContent;
+        private Microsoft.UI.Dispatching.DispatcherQueue? widgetDispatcher;
         private Microsoft.UI.Xaml.FrameworkElement? activityHostContent;
         // Show/hide cross-fade state. Short on purpose: the widget lives on the taskbar, so anything
         // slower reads as lag rather than as a transition.
@@ -327,6 +328,7 @@ namespace TaskbarQuota.Taskbar
                 RenderTransform = new Microsoft.UI.Xaml.Media.CompositeTransform(),
             };
             host.Content = hostContent;
+            widgetDispatcher = hostContent.DispatcherQueue;
             ResizeWidgetHost(WidgetWidthForMode(WidgetSettingsService.Current));
 
             InitializeActivityHost(taskbarRect);
@@ -1477,29 +1479,6 @@ namespace TaskbarQuota.Taskbar
             }
         }
 
-        private void SetActivityLogicalWidthOnUiThread(int logicalWidth, int physicalWidth)
-        {
-            var summary = activitySummary;
-            if (summary is null)
-                return;
-
-            var dispatcher = summary.DispatcherQueue;
-            if (dispatcher.HasThreadAccess)
-            {
-                summary.SetLogicalWidth(logicalWidth);
-                return;
-            }
-
-            if (!dispatcher.TryEnqueue(() =>
-                {
-                    if (!disposedValue && ActivityHostWidth == physicalWidth)
-                        summary.SetLogicalWidth(logicalWidth);
-                }))
-            {
-                Log.Warning("Could not enqueue adaptive activity width on the UI thread");
-            }
-        }
-
         private static int WidgetWidthForMode(WidgetDisplayMode mode) => mode switch
         {
             WidgetDisplayMode.PercentagesOnly => 220,
@@ -1531,7 +1510,7 @@ namespace TaskbarQuota.Taskbar
                 positionRunnerActive = true;
             }
 
-            _ = ProcessPositionUpdatesAsync();
+            _ = Task.Run(ProcessPositionUpdatesAsync);
         }
 
         private async Task ProcessPositionUpdatesAsync()
@@ -1731,7 +1710,6 @@ namespace TaskbarQuota.Taskbar
                     int physicalWidth = (int)Math.Ceiling(logicalWidth * dpiScale);
                     bool widthChanged = ActivityHostWidth != physicalWidth;
                     ActivityHostWidth = physicalWidth;
-                    SetActivityLogicalWidthOnUiThread(logicalWidth, physicalWidth);
                     if (widthChanged)
                         Log.Debug($"activity width adapted to {logicalWidth} logical px beside quota");
                 }
@@ -1747,45 +1725,58 @@ namespace TaskbarQuota.Taskbar
 
                 int offsetY = barRect.top;
                 cancellationToken.ThrowIfCancellationRequested();
-                var targetAppWindow = appWindow;
-                if (disposedValue || targetAppWindow is null || !IsAlive)
+                if (disposedValue || appWindow is null || !IsAlive)
                     return;
 
-                int previousQuotaOffsetX = currentOffsetX;
-                if (currentOffsetY != offsetY)
+                int activityX = pairPlacement is { } resolvedPair
+                    ? resolvedPair.ActivityX + (offsetX - resolvedPair.QuotaX)
+                    : int.MinValue;
+                int targetX = offsetX;
+                int targetY = offsetY;
+                int targetHeight = barRect.bottom - barRect.top;
+                int targetActivityWidth = ActivityHostWidth;
+                await RunOnWidgetDispatcherAsync(() =>
                 {
-                    targetAppWindow.MoveAndResize(new RectInt32(offsetX, offsetY, WidgetHostWidth, barRect.bottom - barRect.top));
-                    currentOffsetX = offsetX; currentOffsetY = offsetY;
-                }
-                else if (ShouldReposition(currentOffsetX, offsetX, RepositionDeadbandPx))
-                {
-                    targetAppWindow.Move(new PointInt32(offsetX, offsetY));
-                    currentOffsetX = offsetX;
-                }
-                if (previousQuotaOffsetX != int.MinValue && previousQuotaOffsetX != offsetX)
-                    AnimateLayoutSurface(hostContent, ref quotaLayoutStoryboard, previousQuotaOffsetX - offsetX);
+                    if (disposedValue || appWindow is null || IsUserRepositioning)
+                        return;
 
-                if (isActivityVisible && activityAppWindow is not null)
-                {
-                    if (pairPlacement is null)
+                    if (pairPlacement is { } adaptivePair)
+                        activitySummary?.SetLogicalWidth(Math.Clamp(
+                            (int)Math.Floor(adaptivePair.ActivityWidth / dpiScale),
+                            AgentActivitySummary.MinimumLogicalWidth,
+                            AgentActivitySummary.DesiredLogicalWidth));
+
+                    int previousQuotaOffsetX = currentOffsetX;
+                    if (currentOffsetY != targetY)
+                    {
+                        appWindow.MoveAndResize(new RectInt32(targetX, targetY, WidgetHostWidth, targetHeight));
+                        currentOffsetX = targetX;
+                        currentOffsetY = targetY;
+                    }
+                    else if (ShouldReposition(currentOffsetX, targetX, RepositionDeadbandPx))
+                    {
+                        appWindow.Move(new PointInt32(targetX, targetY));
+                        currentOffsetX = targetX;
+                    }
+                    if (previousQuotaOffsetX != int.MinValue && previousQuotaOffsetX != targetX)
+                        AnimateLayoutSurface(hostContent, ref quotaLayoutStoryboard, previousQuotaOffsetX - targetX);
+
+                    if (!isActivityVisible || activityAppWindow is null)
+                        return;
+                    if (activityX == int.MinValue)
                     {
                         Log.Debug("activity hidden: no taskbar lane can fit quota plus the minimum activity width");
                         SetActivityHostVisible(false);
                         return;
                     }
 
-                    var resolvedPair = pairPlacement.Value;
-                    // Keep the solver's saved/detached activity coordinate. If the final monitor clamp
-                    // nudged the quota by a few pixels, carry that same delta to the activity window so
-                    // the pair remains separated without collapsing back beside quota.
-                    int activityX = resolvedPair.ActivityX + (offsetX - resolvedPair.QuotaX);
                     int previousActivityOffsetX = activityOffsetX;
                     activityAppWindow.MoveAndResize(new RectInt32(
-                        activityX, offsetY, ActivityHostWidth, barRect.bottom - barRect.top));
+                        activityX, targetY, targetActivityWidth, targetHeight));
                     activityOffsetX = activityX;
                     if (previousActivityOffsetX != int.MinValue && previousActivityOffsetX != activityX)
                         AnimateLayoutSurface(activityHostContent, ref activityLayoutStoryboard, previousActivityOffsetX - activityX);
-                }
+                }, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -1800,6 +1791,42 @@ namespace TaskbarQuota.Taskbar
                 if (gateAcquired)
                     positionUpdateGate.Release();
             }
+        }
+
+        private Task RunOnWidgetDispatcherAsync(Action action, CancellationToken cancellationToken)
+        {
+            var dispatcher = widgetDispatcher ?? throw new InvalidOperationException("Widget dispatcher is unavailable.");
+            return DispatchPositionUpdateAsync(dispatcher.HasThreadAccess,
+                callback => dispatcher.TryEnqueue(() => callback()), action, cancellationToken);
+        }
+
+        internal static Task DispatchPositionUpdateAsync(
+            bool hasThreadAccess,
+            Func<Action, bool> tryEnqueue,
+            Action action,
+            CancellationToken cancellationToken)
+        {
+            if (hasThreadAccess)
+            {
+                action();
+                return Task.CompletedTask;
+            }
+
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!tryEnqueue(() =>
+                {
+                    try
+                    {
+                        action();
+                        completion.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        completion.TrySetException(ex);
+                    }
+                }))
+                completion.TrySetException(new InvalidOperationException("Could not enqueue widget position update."));
+            return completion.Task.WaitAsync(cancellationToken);
         }
 
         /// <summary>Deadband: ignore sub-threshold recompute deltas (rounding / transient tray width
