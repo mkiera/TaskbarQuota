@@ -30,6 +30,10 @@ namespace TaskbarQuota.Usage
         public static bool IsEnabled => Volatile.Read(ref enabled);
         public static void Enable() => Volatile.Write(ref enabled, true);
         private static readonly Dictionary<ProviderId, HistoryCacheEntry> Cache = new();
+
+        private sealed record FileEventsEntry(DateTime LocalDay, long Length, long WriteTicks, UsageEvent[] Events);
+
+        private static readonly Dictionary<(ProviderId Provider, string Path), FileEventsEntry> FileEvents = new();
         private static readonly Dictionary<ProviderId, object> ProviderLocks =
             Enum.GetValues<ProviderId>().ToDictionary(id => id, _ => new object());
 
@@ -78,12 +82,13 @@ namespace TaskbarQuota.Usage
             }
 
             var now = DateTimeOffset.Now;
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             var events = new List<UsageEvent>();
             foreach (var file in files)
             {
                 try
                 {
-                    events.AddRange(ParseFile(providerId, file, now));
+                    events.AddRange(ParseFileCached(providerId, file, now));
                 }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
@@ -91,13 +96,47 @@ namespace TaskbarQuota.Usage
                 catch (SqliteException) { }
                 catch (InvalidOperationException) { }
             }
+            PruneFileEvents(providerId, files);
 
             history = Aggregate(events, now, SourceNote(providerId), providerId);
             var loaded = history.Last90Days is not null;
             lock (CacheLock)
                 Cache[providerId] = new HistoryCacheEntry(DateTime.Today, fingerprint.FileCount, fingerprint.TotalLength, fingerprint.LatestWriteTicks, fingerprint.PathHash, history);
-            Log.Information($"[history] provider={providerId} files={files.Length} events={events.Count} today={history.Today?.Tokens ?? 0} last90={history.Last90Days?.Tokens ?? 0} loaded={loaded}");
+            Log.Information($"[history] provider={providerId} files={files.Length} events={events.Count} today={history.Today?.Tokens ?? 0} last90={history.Last90Days?.Tokens ?? 0} loaded={loaded} elapsed={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0}ms");
             return loaded;
+        }
+
+        private static UsageEvent[] ParseFileCached(ProviderId providerId, string path, DateTimeOffset now)
+        {
+            var info = new FileInfo(path);
+            long length = info.Length;
+            long writeTicks = info.LastWriteTimeUtc.Ticks;
+            var key = (providerId, path);
+            lock (CacheLock)
+            {
+                if (FileEvents.TryGetValue(key, out var cached)
+                    && cached.LocalDay == DateTime.Today
+                    && cached.Length == length
+                    && cached.WriteTicks == writeTicks)
+                {
+                    return cached.Events;
+                }
+            }
+
+            var events = ParseFile(providerId, path, now).ToArray();
+            lock (CacheLock)
+                FileEvents[key] = new FileEventsEntry(DateTime.Today, length, writeTicks, events);
+            return events;
+        }
+
+        private static void PruneFileEvents(ProviderId providerId, IReadOnlyCollection<string> files)
+        {
+            var current = new HashSet<string>(files);
+            lock (CacheLock)
+            {
+                foreach (var key in FileEvents.Keys.Where(k => k.Provider == providerId && !current.Contains(k.Path)).ToList())
+                    FileEvents.Remove(key);
+            }
         }
 
         private static (int FileCount, long TotalLength, long LatestWriteTicks, int PathHash) Fingerprint(IEnumerable<string> files)
