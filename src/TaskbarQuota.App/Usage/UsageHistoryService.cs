@@ -490,6 +490,9 @@ namespace TaskbarQuota.Usage
             return 0;
         }
 
+        // Usage records are under 200 KB; longer lines carry embedded images and can reach tens of MB.
+        internal const int MaxHistoryLineBytes = 1024 * 1024;
+
         private static IEnumerable<string> ReadSharedLines(string path)
         {
             using var stream = new FileStream(
@@ -497,9 +500,59 @@ namespace TaskbarQuota.Usage
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
-            while (reader.ReadLine() is { } line)
+            foreach (var line in ReadBoundedLines(stream, MaxHistoryLineBytes))
                 yield return line;
+        }
+
+        internal static IEnumerable<string> ReadBoundedLines(Stream stream, int maxLineBytes)
+        {
+            var buffer = new byte[64 * 1024];
+            var line = new MemoryStream();
+            bool skipping = false;
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                int start = 0;
+                for (int i = 0; i < read; i++)
+                {
+                    if (buffer[i] != (byte)'\n')
+                        continue;
+
+                    if (!skipping && line.Length + (i - start) <= maxLineBytes)
+                    {
+                        line.Write(buffer, start, i - start);
+                        yield return DecodeLine(line);
+                    }
+                    line.SetLength(0);
+                    skipping = false;
+                    start = i + 1;
+                }
+
+                if (skipping)
+                    continue;
+                if (line.Length + (read - start) > maxLineBytes)
+                {
+                    line.SetLength(0);
+                    skipping = true;
+                }
+                else
+                {
+                    line.Write(buffer, start, read - start);
+                }
+            }
+
+            if (!skipping && line.Length > 0)
+                yield return DecodeLine(line);
+        }
+
+        private static string DecodeLine(MemoryStream line)
+        {
+            var bytes = line.GetBuffer().AsSpan(0, (int)line.Length);
+            if (bytes.Length > 0 && bytes[^1] == (byte)'\r')
+                bytes = bytes[..^1];
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                bytes = bytes[3..];
+            return System.Text.Encoding.UTF8.GetString(bytes);
         }
 
         private static string ReadSharedText(string path)
