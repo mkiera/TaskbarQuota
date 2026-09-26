@@ -1718,17 +1718,15 @@ namespace TaskbarQuota.Taskbar
                     offsetX = fitX;
                 }
 
+                int adaptiveLogicalWidth = 0;
+                int adaptivePhysicalWidth = 0;
                 if (pairPlacement is { } adaptivePair)
                 {
-                    int logicalWidth = Math.Clamp(
+                    adaptiveLogicalWidth = Math.Clamp(
                         (int)Math.Floor(adaptivePair.ActivityWidth / dpiScale),
                         AgentActivitySummary.MinimumLogicalWidth,
                         AgentActivitySummary.DesiredLogicalWidth);
-                    int physicalWidth = (int)Math.Ceiling(logicalWidth * dpiScale);
-                    bool widthChanged = ActivityHostWidth != physicalWidth;
-                    ActivityHostWidth = physicalWidth;
-                    if (widthChanged)
-                        Log.Debug($"activity width adapted to {logicalWidth} logical px beside quota");
+                    adaptivePhysicalWidth = (int)Math.Ceiling(adaptiveLogicalWidth * dpiScale);
                 }
 
                 offsetX = ClampToTaskbarMonitor(
@@ -1751,17 +1749,20 @@ namespace TaskbarQuota.Taskbar
                 int targetX = offsetX;
                 int targetY = offsetY;
                 int targetHeight = barRect.bottom - barRect.top;
-                int targetActivityWidth = ActivityHostWidth;
+                int measuredActivityWidth = ActivityHostWidth;
                 await RunOnWidgetDispatcherAsync(() =>
                 {
                     if (disposedValue || appWindow is null || IsUserRepositioning)
                         return;
 
-                    if (pairPlacement is { } adaptivePair)
-                        activitySummary?.SetLogicalWidth(Math.Clamp(
-                            (int)Math.Floor(adaptivePair.ActivityWidth / dpiScale),
-                            AgentActivitySummary.MinimumLogicalWidth,
-                            AgentActivitySummary.DesiredLogicalWidth));
+                    // A DPI change or drag on the UI thread since the measurement wins over this pass's width.
+                    if (adaptivePhysicalWidth > 0 && ActivityHostWidth == measuredActivityWidth)
+                    {
+                        if (ActivityHostWidth != adaptivePhysicalWidth)
+                            Log.Debug($"activity width adapted to {adaptiveLogicalWidth} logical px beside quota");
+                        ActivityHostWidth = adaptivePhysicalWidth;
+                        activitySummary?.SetLogicalWidth(adaptiveLogicalWidth);
+                    }
 
                     int previousQuotaOffsetX = currentOffsetX;
                     if (currentOffsetY != targetY)
@@ -1789,7 +1790,7 @@ namespace TaskbarQuota.Taskbar
 
                     int previousActivityOffsetX = activityOffsetX;
                     activityAppWindow.MoveAndResize(new RectInt32(
-                        activityX, targetY, targetActivityWidth, targetHeight));
+                        activityX, targetY, ActivityHostWidth, targetHeight));
                     activityOffsetX = activityX;
                     if (previousActivityOffsetX != int.MinValue && previousActivityOffsetX != activityX)
                         AnimateLayoutSurface(activityHostContent, ref activityLayoutStoryboard, previousActivityOffsetX - activityX);
