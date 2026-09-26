@@ -108,10 +108,23 @@ namespace TaskbarQuota.Usage
 
         private static UsageEvent[] ParseFileCached(ProviderId providerId, string path, DateTimeOffset now)
         {
+            // Codex and OpenCode Go read the same session logs, so both share one unfiltered parse.
+            bool codexLog = providerId is ProviderId.Codex or ProviderId.OpenCodeGo
+                && Path.GetExtension(path).Equals(".jsonl", StringComparison.OrdinalIgnoreCase);
+            var events = ReadFileEventsCached(codexLog ? ProviderId.Codex : providerId, path, now, codexLog);
+            if (!codexLog)
+                return events;
+
+            bool openCodeGo = providerId == ProviderId.OpenCodeGo;
+            return events.Where(item => IsOpenCodeGoModel(item.Model) == openCodeGo).ToArray();
+        }
+
+        private static UsageEvent[] ReadFileEventsCached(ProviderId cacheProvider, string path, DateTimeOffset now, bool codexLog)
+        {
             var info = new FileInfo(path);
             long length = info.Length;
             long writeTicks = info.LastWriteTimeUtc.Ticks;
-            var key = (providerId, path);
+            var key = (cacheProvider, path);
             lock (CacheLock)
             {
                 if (FileEvents.TryGetValue(key, out var cached)
@@ -123,7 +136,9 @@ namespace TaskbarQuota.Usage
                 }
             }
 
-            var events = ParseFile(providerId, path, now).ToArray();
+            var events = codexLog
+                ? ParseCodex(ReadSharedLines(path)).ToArray()
+                : ParseFile(cacheProvider, path, now).ToArray();
             lock (CacheLock)
                 FileEvents[key] = new FileEventsEntry(DateTime.Today, length, writeTicks, events);
             return events;
