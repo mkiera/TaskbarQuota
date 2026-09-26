@@ -39,6 +39,8 @@ namespace TaskbarQuota
             {
                 Log.Error(e.Exception, "Unhandled exception");
                 e.Handled = true;
+                if (e.Exception is LayoutCycleException)
+                    TaskBarManager.RebuildAfterLayoutFailure();
             };
         }
 

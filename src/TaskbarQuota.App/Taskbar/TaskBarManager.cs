@@ -815,6 +815,10 @@ namespace TaskbarQuota.Taskbar
         private static void OnTopologyChanged(TopologyChange change)
             => _dispatcher?.TryEnqueue(() => ScheduleTopologyRecovery(change));
 
+        // A tile that hit a XAML layout cycle stops redrawing while still accepting results.
+        public static void RebuildAfterLayoutFailure()
+            => OnTopologyChanged(new TopologyChange(TopologyChangeKind.LayoutFailure, "layout cycle"));
+
         private static void ScheduleTopologyRecovery(TopologyChange change)
         {
             _topologyRecoveryPending = true;
