@@ -31,7 +31,9 @@ namespace TaskbarQuota.Usage
         public static void Enable() => Volatile.Write(ref enabled, true);
         private static readonly Dictionary<ProviderId, HistoryCacheEntry> Cache = new();
 
-        private sealed record FileEventsEntry(DateTime LocalDay, long Length, long WriteTicks, UsageEvent[] Events);
+        internal readonly record struct FileVersion(long Length, long WriteTicks, long WalLength, long WalWriteTicks);
+
+        private sealed record FileEventsEntry(DateTime LocalDay, FileVersion Version, UsageEvent[] Events);
 
         private static readonly Dictionary<(ProviderId Provider, string Path), FileEventsEntry> FileEvents = new();
         private static readonly Dictionary<ProviderId, object> ProviderLocks =
@@ -121,16 +123,13 @@ namespace TaskbarQuota.Usage
 
         private static UsageEvent[] ReadFileEventsCached(ProviderId cacheProvider, string path, DateTimeOffset now, bool codexLog)
         {
-            var info = new FileInfo(path);
-            long length = info.Length;
-            long writeTicks = info.LastWriteTimeUtc.Ticks;
+            var version = ReadFileVersion(path);
             var key = (cacheProvider, path);
             lock (CacheLock)
             {
                 if (FileEvents.TryGetValue(key, out var cached)
                     && cached.LocalDay == DateTime.Today
-                    && cached.Length == length
-                    && cached.WriteTicks == writeTicks)
+                    && cached.Version == version)
                 {
                     return cached.Events;
                 }
@@ -140,8 +139,20 @@ namespace TaskbarQuota.Usage
                 ? ParseCodex(ReadSharedLines(path)).ToArray()
                 : ParseFile(cacheProvider, path, now).ToArray();
             lock (CacheLock)
-                FileEvents[key] = new FileEventsEntry(DateTime.Today, length, writeTicks, events);
+                FileEvents[key] = new FileEventsEntry(DateTime.Today, version, events);
             return events;
+        }
+
+        internal static FileVersion ReadFileVersion(string path)
+        {
+            var info = new FileInfo(path);
+            // SQLite in WAL mode appends to the -wal companion and leaves the main file unchanged until a checkpoint.
+            var wal = new FileInfo(path + "-wal");
+            return new FileVersion(
+                info.Length,
+                info.LastWriteTimeUtc.Ticks,
+                wal.Exists ? wal.Length : 0,
+                wal.Exists ? wal.LastWriteTimeUtc.Ticks : 0);
         }
 
         private static void PruneFileEvents(ProviderId providerId, IReadOnlyCollection<string> files)
