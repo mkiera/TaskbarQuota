@@ -38,7 +38,7 @@ namespace TaskbarQuota.Usage.Providers
         private static bool _oauthRateLimitLoaded;
         // One OAuth usage request at a time: the endpoint answers a burst with a 429 and Retry-After of an hour.
         private static readonly SemaphoreSlim OAuthRequestGate = new(1, 1);
-        private static (DateTimeOffset At, ProviderFetchResult Result)? _lastOAuthResult;
+        private static (DateTimeOffset At, string AccessToken, ProviderFetchResult Result)? _lastOAuthResult;
         private static readonly TimeSpan OAuthResultReuseWindow = TimeSpan.FromSeconds(30);
 
         private static string RateLimitStatePath => Path.Combine(AppStorage.AppDataDirectory, "claude-oauth-rate-limit.txt");
@@ -91,7 +91,7 @@ namespace TaskbarQuota.Usage.Providers
             await OAuthRequestGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (await TryReuseOrRateLimitedAsync(ct).ConfigureAwait(false) is { } early)
+                if (await TryReuseOrRateLimitedAsync(creds.AccessToken, ct).ConfigureAwait(false) is { } early)
                     return early;
 
                 using var response = await SendUsageRequestAsync(creds.AccessToken, ct).ConfigureAwait(false);
@@ -122,7 +122,7 @@ namespace TaskbarQuota.Usage.Providers
             await OAuthRequestGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (await TryReuseOrRateLimitedAsync(ct).ConfigureAwait(false) is { } early)
+                if (await TryReuseOrRateLimitedAsync(oauth.AccessToken, ct).ConfigureAwait(false) is { } early)
                     return early;
 
                 using var resp = await SendUsageRequestAsync(oauth.AccessToken, ct).ConfigureAwait(false);
@@ -139,13 +139,10 @@ namespace TaskbarQuota.Usage.Providers
             }
         }
 
-        private static async Task<ProviderFetchResult?> TryReuseOrRateLimitedAsync(CancellationToken ct)
+        private static async Task<ProviderFetchResult?> TryReuseOrRateLimitedAsync(string accessToken, CancellationToken ct)
         {
-            lock (RateLimitLock)
-            {
-                if (_lastOAuthResult is { } last && DateTimeOffset.Now - last.At < OAuthResultReuseWindow)
-                    return last.Result;
-            }
+            if (RecentOAuthResult(accessToken, DateTimeOffset.Now) is { } recent)
+                return recent;
 
             if (TryReadT3UsageCache(DateTimeOffset.Now) is { } t3Result)
                 return t3Result;
@@ -237,6 +234,24 @@ namespace TaskbarQuota.Usage.Providers
             return new ProviderFetchResult(usage, "t3code");
         }
 
+        internal static ProviderFetchResult? RecentOAuthResult(string accessToken, DateTimeOffset now)
+        {
+            lock (RateLimitLock)
+            {
+                return _lastOAuthResult is { } last
+                    && string.Equals(last.AccessToken, accessToken, StringComparison.Ordinal)
+                    && now - last.At < OAuthResultReuseWindow
+                    ? last.Result
+                    : null;
+            }
+        }
+
+        internal static void RememberOAuthResult(string accessToken, ProviderFetchResult result, DateTimeOffset at)
+        {
+            lock (RateLimitLock)
+                _lastOAuthResult = (at, accessToken, result);
+        }
+
         private static async Task<HttpResponseMessage> SendUsageRequestAsync(string accessToken, CancellationToken ct)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, UsageUrl);
@@ -268,8 +283,7 @@ namespace TaskbarQuota.Usage.Providers
             ClearOAuthRateLimit();
 
             var result = BuildResult(doc.RootElement, creds);
-            lock (RateLimitLock)
-                _lastOAuthResult = (DateTimeOffset.Now, result);
+            RememberOAuthResult(creds.AccessToken, result, DateTimeOffset.Now);
             return result;
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using TaskbarQuota.Usage;
 using TaskbarQuota.Usage.Providers;
 
 namespace TaskbarQuota.Tests;
@@ -47,4 +48,16 @@ public class ClaudeRateLimitPersistenceTests : IDisposable
     [Fact]
     public void No_saved_rate_limit_means_not_limited()
         => Assert.False(ClaudeProvider.IsOAuthRateLimited());
+
+    [Fact]
+    public void Recent_result_is_reused_only_for_the_same_token()
+    {
+        var now = DateTimeOffset.Now;
+        var result = new ProviderFetchResult(new UsageSnapshot(new RateWindow(40)), "oauth");
+        ClaudeProvider.RememberOAuthResult("token-a", result, now);
+
+        Assert.Same(result, ClaudeProvider.RecentOAuthResult("token-a", now.AddSeconds(10)));
+        Assert.Null(ClaudeProvider.RecentOAuthResult("token-b", now.AddSeconds(10)));
+        Assert.Null(ClaudeProvider.RecentOAuthResult("token-a", now.AddSeconds(31)));
+    }
 }
