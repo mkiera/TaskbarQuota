@@ -24,4 +24,16 @@ public class StartupSettingsServiceTests
     [InlineData(StartupTaskState.DisabledByPolicy, false)]
     public void EnabledStateMatchesWindowsRegistration(StartupTaskState state, bool expected)
         => Assert.Equal(expected, StartupSettingsService.IsEnabledState(state));
+
+    [Fact]
+    public void OlderInstallerStartupIsRecognizedWithoutFlaggingTheCurrentExecutable()
+    {
+        const string current = @"C:\Apps\Store\TaskbarQuota.exe";
+        Assert.True(StartupSettingsService.IsOlderInstallerRunValue(
+            "\"C:\\Apps\\Old\\TaskbarQuota.exe\" --startup-widget", current));
+        Assert.False(StartupSettingsService.IsOlderInstallerRunValue(
+            "\"C:\\Apps\\Store\\TaskbarQuota.exe\" --startup-widget", current));
+        Assert.False(StartupSettingsService.IsOlderInstallerRunValue(
+            "\"C:\\Apps\\Old\\TaskbarQuota.exe\"", current));
+    }
 }

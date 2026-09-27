@@ -135,9 +135,14 @@
                 <tk:SettingsCard.HeaderIcon>
                     <FontIcon Glyph="&#xE7F4;"/>
                 </tk:SettingsCard.HeaderIcon>
-                <ToggleSwitch x:Name="StartupToggle"
-                              AutomationProperties.Name="Open at startup"
-                              Toggled="OnStartupToggled"/>
+                <StackPanel Spacing="8">
+                    <ToggleSwitch x:Name="StartupToggle"
+                                  AutomationProperties.Name="Open at startup"
+                                  Toggled="OnStartupToggled"/>
+                    <TextBlock x:Name="StartupHelpText"
+                               Visibility="Collapsed"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
             </tk:SettingsCard>
 
             <TextBlock Text="Notifications" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,16,0,2"/>

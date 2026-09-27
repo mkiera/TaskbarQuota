@@ -7,6 +7,8 @@ namespace TaskbarQuota;
 
 public static class StartupSettingsService
 {
+    public sealed record StartupStatus(bool IsEnabled, bool DisabledByUser, bool HasOlderInstallerStartup);
+
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "TaskbarQuota";
     private const string LegacyRunValueName = "WinCheck";
@@ -53,13 +55,36 @@ public static class StartupSettingsService
     }
 
     public static async Task<bool> IsEnabledAsync()
+        => (await ReadStatusAsync()).IsEnabled;
+
+    public static async Task<StartupStatus> ReadStatusAsync()
     {
         if (!HasPackageIdentity)
-            return IsRunKeyEnabled;
+            return new StartupStatus(IsRunKeyEnabled, false, false);
 
         var task = await StartupTask.GetAsync(StartupTaskId);
-        return IsEnabledState(task.State);
+        return new StartupStatus(IsEnabledState(task.State),
+            task.State == StartupTaskState.DisabledByUser, HasOlderInstallerStartup());
     }
+
+    private static bool HasOlderInstallerStartup()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
+            return IsOlderInstallerRunValue(key?.GetValue(RunValueName) as string, Environment.ProcessPath)
+                || IsOlderInstallerRunValue(key?.GetValue(LegacyRunValueName) as string, Environment.ProcessPath);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static bool IsOlderInstallerRunValue(string? value, string? executable)
+        => value is not null
+            && value.Contains(StartupArgument, StringComparison.OrdinalIgnoreCase)
+            && !IsRunValueForExecutable(value, executable);
 
     internal static bool IsEnabledState(StartupTaskState state)
         => state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;

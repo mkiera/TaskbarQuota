@@ -602,7 +602,8 @@ namespace TaskbarQuota.Views
             StartupToggle.IsEnabled = false;
             try
             {
-                StartupToggle.IsOn = await StartupSettingsService.ApplyAsync(StartupToggle.IsOn);
+                await StartupSettingsService.ApplyAsync(StartupToggle.IsOn);
+                await RefreshStartupToggleAsync();
             }
             catch (System.Exception ex)
             {
@@ -622,12 +623,21 @@ namespace TaskbarQuota.Views
             StartupToggle.IsEnabled = false;
             try
             {
-                StartupToggle.IsOn = await StartupSettingsService.IsEnabledAsync();
+                var status = await StartupSettingsService.ReadStatusAsync();
+                StartupToggle.IsOn = status.IsEnabled;
+                var guidance = new List<string>();
+                if (status.DisabledByUser)
+                    guidance.Add("Windows disabled this startup app. Re-enable TaskbarQuota in Windows Settings > Apps > Startup.");
+                if (status.HasOlderInstallerStartup)
+                    guidance.Add("An older TaskbarQuota installation also starts with Windows. Disable its startup entry or uninstall the older installation to avoid two widgets.");
+                StartupHelpText.Text = string.Join(" ", guidance);
+                StartupHelpText.Visibility = guidance.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             }
             catch (System.Exception ex)
             {
                 Log.Warning(ex, "Could not read startup registration");
                 StartupToggle.IsOn = false;
+                StartupHelpText.Visibility = Visibility.Collapsed;
             }
             finally
             {

@@ -158,11 +158,21 @@ namespace TaskbarQuota.Usage
 
         private static void PruneFileEvents(ProviderId providerId, IReadOnlyCollection<string> files)
         {
-            var current = new HashSet<string>(files);
+            var current = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
             lock (CacheLock)
             {
                 foreach (var key in FileEvents.Keys.Where(k => k.Provider == providerId && !current.Contains(k.Path)).ToList())
                     FileEvents.Remove(key);
+
+                // OpenCode Go parses Codex-style sessions into the shared Codex cache. It may be
+                // the only provider queried, so its file discovery must also evict deleted logs.
+                if (providerId == ProviderId.OpenCodeGo)
+                {
+                    foreach (var key in FileEvents.Keys.Where(k => k.Provider == ProviderId.Codex
+                        && Path.GetExtension(k.Path).Equals(".jsonl", StringComparison.OrdinalIgnoreCase)
+                        && !current.Contains(k.Path)).ToList())
+                        FileEvents.Remove(key);
+                }
             }
         }
 
