@@ -64,6 +64,7 @@ namespace TaskbarQuota.Usage
             var files = DiscoverFiles(providerId).ToArray();
             if (files.Length == 0)
             {
+                PruneFileEvents(providerId, files);
                 history = new UsageHistory();
                 return false;
             }
