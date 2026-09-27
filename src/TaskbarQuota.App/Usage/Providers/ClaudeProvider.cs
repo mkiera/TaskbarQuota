@@ -42,6 +42,10 @@ namespace TaskbarQuota.Usage.Providers
         private static readonly TimeSpan OAuthResultReuseWindow = TimeSpan.FromSeconds(30);
 
         private static string RateLimitStatePath => Path.Combine(AppStorage.AppDataDirectory, "claude-oauth-rate-limit.txt");
+        // T3 Code polls the same OAuth usage endpoint with the same token and caches the result here.
+        private static string T3UsageCachePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".t3", "caches", "claudeAgent.json");
+        private static readonly TimeSpan T3UsageMaxAge = TimeSpan.FromMinutes(5);
 
         public ProviderId Id => ProviderId.Claude;
         public string DisplayName => "Claude Code";
@@ -143,6 +147,9 @@ namespace TaskbarQuota.Usage.Providers
                     return last.Result;
             }
 
+            if (TryReadT3UsageCache(DateTimeOffset.Now) is { } t3Result)
+                return t3Result;
+
             if (!IsOAuthRateLimited())
                 return null;
 
@@ -150,6 +157,84 @@ namespace TaskbarQuota.Usage.Providers
                 return webResult;
 
             throw new ProviderException(ProviderErrorKind.RateLimited, "Claude API rate limited. Will retry in a few minutes.");
+        }
+
+        private static ProviderFetchResult? TryReadT3UsageCache(DateTimeOffset now)
+        {
+            try
+            {
+                if (!File.Exists(T3UsageCachePath))
+                    return null;
+                using var stream = new FileStream(T3UsageCachePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var doc = JsonDocument.Parse(stream);
+                return BuildResultFromT3Cache(doc.RootElement, now, T3UsageMaxAge);
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (JsonException) { return null; }
+        }
+
+        internal static ProviderFetchResult? BuildResultFromT3Cache(JsonElement root, DateTimeOffset now, TimeSpan maxAge)
+        {
+            if (!root.TryGetProperty("usageLimits", out var limits) || limits.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!limits.TryGetProperty("checkedAt", out var checkedAtElement)
+                || !DateTimeOffset.TryParse(checkedAtElement.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var checkedAt)
+                || now - checkedAt > maxAge
+                || checkedAt - now > maxAge)
+                return null;
+            if (!limits.TryGetProperty("windows", out var windows) || windows.ValueKind != JsonValueKind.Array)
+                return null;
+
+            RateWindow? session = null;
+            RateWindow? weekly = null;
+            RateWindow? fable = null;
+            foreach (var window in windows.EnumerateArray())
+            {
+                if (!window.TryGetProperty("id", out var idElement) || idElement.GetString() is not { } id)
+                    continue;
+                if (!window.TryGetProperty("usedPercent", out var used) || used.ValueKind != JsonValueKind.Number)
+                    continue;
+
+                int minutes = window.TryGetProperty("windowDurationMins", out var mins) && mins.ValueKind == JsonValueKind.Number
+                    ? mins.GetInt32()
+                    : 10080;
+                DateTimeOffset? resetAt = null;
+                if (window.TryGetProperty("resetsAt", out var resets) && resets.ValueKind == JsonValueKind.String
+                    && DateTimeOffset.TryParse(resets.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+                {
+                    resetAt = parsed;
+                }
+
+                var rate = new RateWindow(used.GetDouble(), minutes, resetAt,
+                    resetAt is { } at ? CodexProvider.FormatResetCountdown(at) : null);
+                switch (id)
+                {
+                    case "five_hour": session = rate; break;
+                    case "seven_day": weekly = rate; break;
+                    case "seven_day_fable": fable = rate; break;
+                }
+            }
+
+            if (session is null && weekly is null)
+                return null;
+
+            var usage = new UsageSnapshot(session ?? new RateWindow(0))
+            {
+                HasPrimaryWindow = session != null,
+            };
+            usage.Secondary = weekly;
+            if (fable is { } fableWindow)
+                usage.ExtraRateWindows.Add(new NamedRateWindow("claude-fable", "Fable", fableWindow));
+            lock (RateLimitLock)
+            {
+                if (_lastOAuthResult is { } last)
+                {
+                    usage.ResetCredits = last.Result.Usage.ResetCredits;
+                    usage.LoginMethod = last.Result.Usage.LoginMethod;
+                }
+            }
+            return new ProviderFetchResult(usage, "t3code");
         }
 
         private static async Task<HttpResponseMessage> SendUsageRequestAsync(string accessToken, CancellationToken ct)
@@ -167,6 +252,8 @@ namespace TaskbarQuota.Usage.Providers
             if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
             {
                 RecordOAuthRateLimit(response);
+                if (TryReadT3UsageCache(DateTimeOffset.Now) is { } t3Result)
+                    return t3Result;
                 if (await TryFetchWebUsageAsync(ct).ConfigureAwait(false) is { } webResult)
                     return webResult;
 
