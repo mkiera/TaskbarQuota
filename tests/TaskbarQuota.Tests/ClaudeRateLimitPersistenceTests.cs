@@ -46,6 +46,19 @@ public class ClaudeRateLimitPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void New_login_clears_a_saved_rate_limit_before_it_is_loaded()
+    {
+        ClaudeProvider.RecordOAuthRateLimitUntil(DateTimeOffset.Now.AddHours(1));
+        ClaudeProvider.ForgetInMemoryRateLimitForTesting();
+
+        ClaudeProvider.ClearRateLimitAfterLogin();
+        ClaudeProvider.ForgetInMemoryRateLimitForTesting();
+
+        Assert.False(ClaudeProvider.IsOAuthRateLimited());
+        Assert.Empty(Directory.GetFiles(_directory));
+    }
+
+    [Fact]
     public void No_saved_rate_limit_means_not_limited()
         => Assert.False(ClaudeProvider.IsOAuthRateLimited());
 

@@ -617,6 +617,17 @@ namespace TaskbarQuota.Usage.Providers
             }
         }
 
+        // A new login has its own request allowance, so a wait recorded for the old token must not block it.
+        internal static void ClearRateLimitAfterLogin()
+        {
+            lock (RateLimitLock)
+            {
+                _oauthRateLimitLoaded = true;
+                _oauthRateLimitedUntil = null;
+                PersistRateLimit();
+            }
+        }
+
         internal static void ForgetInMemoryRateLimitForTesting()
         {
             lock (RateLimitLock)

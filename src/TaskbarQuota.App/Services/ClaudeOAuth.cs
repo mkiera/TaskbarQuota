@@ -113,6 +113,7 @@ namespace TaskbarQuota.Services
             };
             var tokens = await PostTokenAsync(body, fallbackRefresh: null, ct).ConfigureAwait(false);
             Save(tokens);
+            TaskbarQuota.Usage.Providers.ClaudeProvider.ClearRateLimitAfterLogin();
             return tokens;
         }
 
