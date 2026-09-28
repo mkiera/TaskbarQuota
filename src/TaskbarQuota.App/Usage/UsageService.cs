@@ -27,6 +27,7 @@ namespace TaskbarQuota.Usage
         // unchanged. Well inside UsageSnapshotStore.MaxRestoreAge, so a still-live entry can never age out
         // on disk, while unchanged polls still avoid a write on almost every tick.
         private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromHours(1);
+        internal static readonly TimeSpan FallbackStaleAfter = TimeSpan.FromMinutes(10);
 
         // Serializes snapshot writes; see QueueSnapshotSave.
         private static readonly SemaphoreSlim SnapshotWriteGate = new(1, 1);
@@ -150,7 +151,9 @@ namespace TaskbarQuota.Usage
             {
                 if (ShouldReuseLastSuccessfulResult(pe.Kind) && TryGetLastSuccessfulLiveResult(id, out var lastSuccess))
                 {
-                    var fallback = lastSuccess.AsFailureFallback(observationSequence, DateTimeOffset.Now);
+                    var now = DateTimeOffset.Now;
+                    var fallback = lastSuccess.AsFailureFallback(observationSequence, now,
+                        IsFallbackStale(lastSuccess.ObservedAt, now));
                     Store(id, fallback, FetchCachePolicy.TtlForFailure(pe.Kind));
                     return fallback;
                 }
@@ -274,6 +277,9 @@ namespace TaskbarQuota.Usage
             entry = default;
             return false;
         }
+
+        internal static bool IsFallbackStale(DateTimeOffset? lastConfirmedAt, DateTimeOffset now)
+            => lastConfirmedAt is not { } confirmed || now - confirmed > FallbackStaleAfter;
 
         private static bool ShouldReuseLastSuccessfulResult(ProviderErrorKind kind)
             => kind is not ProviderErrorKind.AuthRequired and not ProviderErrorKind.NotInstalled;
@@ -523,7 +529,9 @@ namespace TaskbarQuota.Usage
         public bool IsPending { get; private init; }
         /// <summary>
         /// True for a snapshot restored from disk at startup: real numbers from the previous session that
-        /// no live fetch has confirmed yet. The widget renders these dimmed with an "as of" tooltip.
+        /// no live fetch has confirmed yet. Also true for a failure fallback whose values were last
+        /// confirmed more than <see cref="UsageService.FallbackStaleAfter"/> ago. The widget renders these
+        /// dimmed with an "as of" tooltip.
         /// </summary>
         public bool IsStale { get; private init; }
         internal UsageObservationOrigin ObservationOrigin { get; private init; }
@@ -584,8 +592,8 @@ namespace TaskbarQuota.Usage
                 ObservedAt,
                 IsStale);
 
-        internal UsageResult AsFailureFallback(long sequence, DateTimeOffset observedAt)
-            => WithObservation(UsageObservationOrigin.FailureFallback, sequence, observedAt, isStale: false);
+        internal UsageResult AsFailureFallback(long sequence, DateTimeOffset observedAt, bool isStale = false)
+            => WithObservation(UsageObservationOrigin.FailureFallback, sequence, observedAt, isStale);
 
         private UsageResult WithStale(bool isStale)
             => WithObservation(ObservationOrigin, ObservationSequence, ObservedAt, isStale);

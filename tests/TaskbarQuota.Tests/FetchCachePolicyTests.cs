@@ -41,6 +41,58 @@ public class FetchCachePolicyTests
     }
 
     [Fact]
+    public async Task FetchAsync_FailureRightAfterSuccess_IsNotMarkedStale()
+    {
+        var service = new UsageService();
+        var provider = new FlakyProvider();
+        service.Register(provider);
+
+        await service.FetchAsync(ProviderId.Claude, force: true);
+        provider.NextException = new ProviderException(ProviderErrorKind.RateLimited, "429");
+        var fallback = await service.FetchAsync(ProviderId.Claude, force: true);
+
+        Assert.Equal(UsageObservationOrigin.FailureFallback, fallback.ObservationOrigin);
+        Assert.False(fallback.IsStale);
+    }
+
+    [Fact]
+    public async Task FetchAsync_FailureWithOnlyRestoredValues_IsMarkedStale()
+    {
+        var dir = Directory.CreateTempSubdirectory("tbq-fallback-").FullName;
+        try
+        {
+            var usage = new UsageSnapshot(new RateWindow(55, 300, DateTimeOffset.Now.AddHours(3)));
+            UsageSnapshotStore.Save(dir, new Dictionary<ProviderId, UsageResult>
+            {
+                [ProviderId.Claude] = UsageResult.Success(ProviderId.Claude, new FlakyProvider(),
+                    new ProviderFetchResult(usage, "oauth", DateTimeOffset.Now.AddHours(-2))),
+            });
+            var service = new UsageService(dir);
+            var provider = new FlakyProvider { NextException = new ProviderException(ProviderErrorKind.RateLimited, "429") };
+            service.Register(provider);
+
+            var fallback = await service.FetchAsync(ProviderId.Claude, force: true);
+
+            Assert.Equal(UsageObservationOrigin.FailureFallback, fallback.ObservationOrigin);
+            Assert.Equal(55, fallback.Fetch!.Usage.Primary.UsedPercent);
+            Assert.True(fallback.IsStale);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Fallback_is_stale_once_the_last_confirmation_is_older_than_the_limit()
+    {
+        var now = DateTimeOffset.Now;
+        Assert.False(UsageService.IsFallbackStale(now - UsageService.FallbackStaleAfter + TimeSpan.FromSeconds(1), now));
+        Assert.True(UsageService.IsFallbackStale(now - UsageService.FallbackStaleAfter - TimeSpan.FromSeconds(1), now));
+        Assert.True(UsageService.IsFallbackStale(null, now));
+    }
+
+    [Fact]
     public async Task FetchAsync_TransientFailureAfterSuccess_DoesNotPublishZeroUsage()
     {
         var service = new UsageService();
