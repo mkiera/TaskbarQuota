@@ -191,7 +191,9 @@ namespace TaskbarQuota.Controls
                 ? ThemeService.IsLightChrome(this)
                 : Interop.SystemInfos.IsSystemLightThemeUsed() == true;
 
-            Foreground = new SolidColorBrush(light ? Color.FromArgb(255, 28, 28, 28) : Colors.White);
+            Foreground = new SolidColorBrush(ShowsStaleWarning(_lastResult)
+                ? (light ? Color.FromArgb(255, 196, 43, 28) : Color.FromArgb(255, 255, 153, 164))
+                : (light ? Color.FromArgb(255, 28, 28, 28) : Colors.White));
             HostBadgeBox.Background = new SolidColorBrush(light ? Colors.White : Color.FromArgb(255, 32, 32, 32));
             HostBadgeGlyph.Fill = Foreground;
             var track = new SolidColorBrush(light ? Color.FromArgb(90, 28, 28, 28) : Color.FromArgb(110, 255, 255, 255));
@@ -1144,7 +1146,12 @@ namespace TaskbarQuota.Controls
         /// To value becomes the property's resting value, so every animation that touches Panel.Opacity has
         /// to end here or it animates away the stale-snapshot dimming applied in Apply (#21).
         /// </summary>
-        private double RestingPanelOpacity => _lastResult?.IsStale == true ? StaleOpacity : 1.0;
+        private double RestingPanelOpacity
+            => _lastResult?.IsStale == true && !ShowsStaleWarning(_lastResult) ? StaleOpacity : 1.0;
+
+        // Values kept after refreshes kept failing turn red; a boot-time snapshot only dims until the first fetch.
+        internal static bool ShowsStaleWarning(UsageResult? result)
+            => result is { IsStale: true, ObservationOrigin: UsageObservationOrigin.FailureFallback };
 
         private void AnimateVisibility(double toOpacity, double toOffset, int milliseconds)
         {
