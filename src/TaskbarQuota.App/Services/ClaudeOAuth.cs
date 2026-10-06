@@ -45,6 +45,8 @@ namespace TaskbarQuota.Services
         private const string RedirectUri = "https://platform.claude.com/oauth/code/callback";
         private const string TokenUrl = "https://platform.claude.com/v1/oauth/token";
         private const string Scope = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+        // The token endpoint rejects a refresh that asks for org:create_api_key with invalid_scope.
+        internal const string RefreshScope = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -131,13 +133,7 @@ namespace TaskbarQuota.Services
 
             try
             {
-                var body = new Dictionary<string, string>
-                {
-                    ["grant_type"] = "refresh_token",
-                    ["client_id"] = ClientId,
-                    ["refresh_token"] = tokens.RefreshToken!,
-                    ["scope"] = Scope,
-                };
+                var body = BuildRefreshBody(tokens.RefreshToken!);
                 var refreshed = await PostTokenAsync(body, fallbackRefresh: tokens.RefreshToken, ct).ConfigureAwait(false);
                 Save(refreshed);
                 return refreshed;
@@ -148,6 +144,15 @@ namespace TaskbarQuota.Services
                 return null;
             }
         }
+
+        internal static Dictionary<string, string> BuildRefreshBody(string refreshToken)
+            => new()
+            {
+                ["grant_type"] = "refresh_token",
+                ["client_id"] = ClientId,
+                ["refresh_token"] = refreshToken,
+                ["scope"] = RefreshScope,
+            };
 
         private static async Task<ClaudeTokens> PostTokenAsync(Dictionary<string, string> body, string? fallbackRefresh, CancellationToken ct)
         {

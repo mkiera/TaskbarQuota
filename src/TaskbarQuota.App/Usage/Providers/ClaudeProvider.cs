@@ -26,7 +26,7 @@ namespace TaskbarQuota.Usage.Providers
         private const string UsageUrl = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1";
         private const string RefreshUrl = "https://platform.claude.com/v1/oauth/token";
         private const string ClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-        private const string RefreshScope = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+        private const string RefreshScope = Services.ClaudeOAuth.RefreshScope;
         private const string WebApiBaseUrl = "https://claude.ai/api";
         public const string PreferWebEnvironmentVariable = "TASKBARQUOTA_CLAUDE_PREFER_WEB";
         public const string ForceLoginEnvironmentVariable = "TASKBARQUOTA_CLAUDE_FORCE_LOGIN";
