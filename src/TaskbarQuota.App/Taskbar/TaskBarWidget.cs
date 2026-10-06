@@ -1815,7 +1815,7 @@ namespace TaskbarQuota.Taskbar
         {
             var dispatcher = widgetDispatcher ?? throw new InvalidOperationException("Widget dispatcher is unavailable.");
             return DispatchPositionUpdateAsync(dispatcher.HasThreadAccess,
-                callback => dispatcher.TryEnqueue(() => callback()), action, cancellationToken);
+                callback => dispatcher.TryEnqueueSafe(() => callback()), action, cancellationToken);
         }
 
         internal static Task DispatchPositionUpdateAsync(
@@ -3369,7 +3369,7 @@ namespace TaskbarQuota.Taskbar
                 if (HostOwners.TryGetValue(hWnd, out var weak)
                     && weak.TryGetTarget(out var owner))
                 {
-                    App.Dispatcher?.TryEnqueue(
+                    App.Dispatcher?.TryEnqueueSafe(
                         () => owner.HandleHostDpiNotification(hWnd, authoritative));
                 }
             }

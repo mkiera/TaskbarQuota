@@ -56,7 +56,7 @@ public sealed partial class UpdateActionBar : UserControl
   }
 
   private void OnAvailabilityChanged() =>
-      _ = DispatcherQueue.TryEnqueue(ApplyAvailability);
+      _ = DispatcherQueue.TryEnqueueSafe(ApplyAvailability);
 
   private bool IsSettingsMode => Placement == UpdateActionBarPlacement.Settings;
 
@@ -197,7 +197,7 @@ public sealed partial class UpdateActionBar : UserControl
   {
     var progress = new Progress<UpdateDownloadProgress>(report =>
     {
-      _ = DispatcherQueue.TryEnqueue(() => ReportDownload(report));
+      _ = DispatcherQueue.TryEnqueueSafe(() => ReportDownload(report));
     });
 
     await _updates.DownloadAsync(progress);

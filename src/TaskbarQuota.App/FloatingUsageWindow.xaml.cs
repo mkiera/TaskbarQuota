@@ -201,7 +201,7 @@ public sealed partial class FloatingUsageWindow : Window
     }
 
     private void OnWidgetSettingsChanged(object? sender, EventArgs e)
-        => DispatcherQueue.TryEnqueue(ApplyAcrylicMaterial);
+        => DispatcherQueue.TryEnqueueSafe(ApplyAcrylicMaterial);
 
     private void InitializeAcrylicBackdrop()
     {
@@ -328,9 +328,9 @@ public sealed partial class FloatingUsageWindow : Window
         ScheduleAcrylicFrameReady();
 
         // Give Loaded/layout and one compositor turn a chance to complete before hiding the window.
-        DispatcherQueue.TryEnqueue(
+        DispatcherQueue.TryEnqueueSafe(
             DispatcherQueuePriority.Low,
-            () => DispatcherQueue.TryEnqueue(
+            () => DispatcherQueue.TryEnqueueSafe(
                 DispatcherQueuePriority.Low,
                 () =>
                 {
@@ -378,9 +378,9 @@ public sealed partial class FloatingUsageWindow : Window
             return;
 
         _acrylicFrameReadyScheduled = true;
-        DispatcherQueue.TryEnqueue(
+        DispatcherQueue.TryEnqueueSafe(
             DispatcherQueuePriority.Low,
-            () => DispatcherQueue.TryEnqueue(
+            () => DispatcherQueue.TryEnqueueSafe(
                 DispatcherQueuePriority.Low,
                 () =>
                 {
@@ -612,12 +612,12 @@ public sealed partial class FloatingUsageWindow : Window
 
             // The child consumes any click synthesized by this release. Clear every other child's flag
             // only after routed input finishes so the next genuine single click is never discarded.
-            DispatcherQueue.TryEnqueue(ContentHost.ClearSuppressedClicks);
+            DispatcherQueue.TryEnqueueSafe(ContentHost.ClearSuppressedClicks);
         }
     }
 
     private void OnThemeSettingsChanged(ThemeSettings sender, object args)
-        => DispatcherQueue.TryEnqueue(ApplyAcrylicMaterial);
+        => DispatcherQueue.TryEnqueueSafe(ApplyAcrylicMaterial);
 
     private void Root_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
     {
@@ -641,7 +641,7 @@ public sealed partial class FloatingUsageWindow : Window
             SavePosition(_appWindow.Position.X, _appWindow.Position.Y);
             _hasManualPosition = true;
         }
-        DispatcherQueue.TryEnqueue(ContentHost.ClearSuppressedClicks);
+        DispatcherQueue.TryEnqueueSafe(ContentHost.ClearSuppressedClicks);
     }
 
     private void LoadPositionOrDefault()

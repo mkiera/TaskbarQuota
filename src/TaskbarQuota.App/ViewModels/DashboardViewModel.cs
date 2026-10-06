@@ -130,13 +130,13 @@ namespace TaskbarQuota.ViewModels
         public Task LoadAsync() => LoadProgressiveAsync(force: false);
 
         private void OnPercentageModeChanged(object? sender, EventArgs e)
-            => _dispatcher.TryEnqueue(() => UpdateCards(_lastResults, _lastActive, force: true));
+            => _dispatcher.TryEnqueueSafe(() => UpdateCards(_lastResults, _lastActive, force: true));
 
         private void OnWidgetSettingsChanged(object? sender, EventArgs e)
-            => _dispatcher.TryEnqueue(RefreshCardsVisibility);
+            => _dispatcher.TryEnqueueSafe(RefreshCardsVisibility);
 
         private void OnDashboardCompositionChanged(object? sender, EventArgs e)
-            => _dispatcher.TryEnqueue(() => UpdateCards(_lastResults, _lastActive, force: true));
+            => _dispatcher.TryEnqueueSafe(() => UpdateCards(_lastResults, _lastActive, force: true));
 
         private void RefreshCardsVisibility()
         {
@@ -155,7 +155,7 @@ namespace TaskbarQuota.ViewModels
 
             var active = UsageCoordinator.Instance.ActiveProvider;
             var results = await Task.Run(() => BuildDashboardResults(active)).ConfigureAwait(false);
-            _dispatcher.TryEnqueue(() =>
+            _dispatcher.TryEnqueueSafe(() =>
             {
                 // A newer load may have superseded this one while we were off-thread; only the
                 // newest load may touch shared state, or a cancelled load can flip IsLoading off
@@ -187,7 +187,7 @@ namespace TaskbarQuota.ViewModels
                         _ = Task.Run(() =>
                         {
                             var merged = BuildDashboardResults(current, snapshot);
-                            _dispatcher.TryEnqueue(() =>
+                            _dispatcher.TryEnqueueSafe(() =>
                             {
                                 if (!ReferenceEquals(_loadCts, cts))
                                     return;
@@ -206,7 +206,7 @@ namespace TaskbarQuota.ViewModels
                         var merged = BuildDashboardResults(finalActive, finalResults);
                         return (Results: merged, UsageResults: BuildUsageHistoryResults(merged));
                     }).ConfigureAwait(false);
-                    _dispatcher.TryEnqueue(() =>
+                    _dispatcher.TryEnqueueSafe(() =>
                     {
                         if (!ReferenceEquals(_loadCts, cts))
                             return;
@@ -227,7 +227,7 @@ namespace TaskbarQuota.ViewModels
                 // while the current fetch is still running. Evaluate the identity inside the
                 // callback (on the UI thread), not where the exception was caught, so a load that
                 // was superseded between the catch and the callback execution is skipped.
-                _dispatcher.TryEnqueue(() =>
+                _dispatcher.TryEnqueueSafe(() =>
                 {
                     if (ReferenceEquals(_loadCts, cts))
                         TotalSpend.IsLoading = false;
@@ -249,7 +249,7 @@ namespace TaskbarQuota.ViewModels
             }
             finally
             {
-                _dispatcher.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+                _dispatcher.TryEnqueueSafe(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
                 {
                     Views.DashboardPage.SetSuppressWidgetEvents(false);
                 });
@@ -391,7 +391,7 @@ namespace TaskbarQuota.ViewModels
 
         private void OnCoordinatorStateChanged(UsageResult result)
         {
-            _dispatcher.TryEnqueue(() =>
+            _dispatcher.TryEnqueueSafe(() =>
             {
                 var results = _lastResults.ToList();
                 var index = results.FindIndex(r => r.Id == result.Id);
@@ -405,7 +405,7 @@ namespace TaskbarQuota.ViewModels
         }
 
         private void OnActiveProviderChanged(ProviderId? _)
-            => _dispatcher.TryEnqueue(() => UpdateCards(_lastResults, UsageCoordinator.Instance.ActiveProvider));
+            => _dispatcher.TryEnqueueSafe(() => UpdateCards(_lastResults, UsageCoordinator.Instance.ActiveProvider));
 
         private static IReadOnlyList<UsageResult> OrderResults(IReadOnlyList<UsageResult> results, ProviderId? active)
             => UsageCoordinator.SortByRecentActivity(results, UsageCoordinator.Instance.RecentProviders, active);

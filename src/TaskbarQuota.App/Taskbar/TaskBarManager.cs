@@ -24,7 +24,10 @@ namespace TaskbarQuota.Taskbar
     /// </summary>
     internal static class TaskBarManager
     {
-        private static TrayIconWithContextMenu? _trayIcon;
+        private static TrayIcon? _trayIcon;
+        private static PopupMenu? _trayMenu;
+        private static DispatcherQueueTimer? _trayRetryTimer;
+        private static readonly TimeSpan TrayCreateRetryDelay = TimeSpan.FromSeconds(3);
         private static System.Drawing.Icon? _trayIconSource;
         private static readonly Dictionary<IntPtr, TaskBarWidget> Widgets = new();
         // Reused snapshot of Widgets.Values, so iterating it while a callback may mutate the dictionary
@@ -105,7 +108,7 @@ namespace TaskbarQuota.Taskbar
             {
                 try
                 {
-                    _dispatcher?.TryEnqueue(() => Interlocked.Increment(ref _uiHeartbeat));
+                    _dispatcher?.TryEnqueueSafe(() => Interlocked.Increment(ref _uiHeartbeat));
                 }
                 catch (Exception ex)
                 {
@@ -319,8 +322,8 @@ namespace TaskbarQuota.Taskbar
             {
                 var window = new FloatingUsageWindow();
                 window.HydrateProvider = provider => HydrateResult(UsageCoordinator.Instance, provider);
-                window.Clicked += () => _dispatcher?.TryEnqueue(() => ToggleFlyout(window.Handle));
-                window.ActivityClicked += item => _dispatcher?.TryEnqueue(
+                window.Clicked += () => _dispatcher?.TryEnqueueSafe(() => ToggleFlyout(window.Handle));
+                window.ActivityClicked += item => _dispatcher?.TryEnqueueSafe(
                     () => ToggleActivityFlyout(window.Handle, item?.Id));
                 _floatingWindow = window;
                 window.Prewarm();
@@ -471,12 +474,12 @@ namespace TaskbarQuota.Taskbar
 
         private static void CreateTrayIcon()
         {
-            var open = new PopupMenuItem("Open TaskbarQuota", (_, _) => _dispatcher?.TryEnqueue(() => _showMainWindow?.Invoke()));
-            var activity = new PopupMenuItem("Open agent activity", (_, _) => _dispatcher?.TryEnqueue(
+            var open = new PopupMenuItem("Open TaskbarQuota", (_, _) => _dispatcher?.TryEnqueueSafe(() => _showMainWindow?.Invoke()));
+            var activity = new PopupMenuItem("Open agent activity", (_, _) => _dispatcher?.TryEnqueueSafe(
                 () => ToggleActivityFlyout(anchorHandle: null, selectedActivityId: null)));
-            var move = new PopupMenuItem("Move usage widget", (_, _) => _dispatcher?.TryEnqueue(StartMoveActiveSurface));
-            var reset = new PopupMenuItem("Reset widget positions", (_, _) => _dispatcher?.TryEnqueue(ResetActiveSurfacePositions));
-            var quit = new PopupMenuItem("Quit", (_, _) => _dispatcher?.TryEnqueue(App.Quit));
+            var move = new PopupMenuItem("Move usage widget", (_, _) => _dispatcher?.TryEnqueueSafe(StartMoveActiveSurface));
+            var reset = new PopupMenuItem("Reset widget positions", (_, _) => _dispatcher?.TryEnqueueSafe(ResetActiveSurfacePositions));
+            var quit = new PopupMenuItem("Quit", (_, _) => _dispatcher?.TryEnqueueSafe(App.Quit));
 
             System.Drawing.Icon? icon = null;
             try
@@ -489,22 +492,62 @@ namespace TaskbarQuota.Taskbar
             }
             catch { }
 
-            _trayIcon = new TrayIconWithContextMenu
-            {
-                ContextMenu = new PopupMenu { Items = { open, activity, new PopupMenuSeparator(), move, reset, new PopupMenuSeparator(), quit } },
-                ToolTip = "TaskbarQuota",
-            };
-            _trayIcon.Create();
+            _trayMenu = new PopupMenu { Items = { open, activity, new PopupMenuSeparator(), move, reset, new PopupMenuSeparator(), quit } };
+            DisposeTrayIcon();
+            // TrayIconWithContextMenu creates the icon on its own thread, where a failure right after login ends the process.
+            var trayIcon = new TrayIcon { ToolTip = "TaskbarQuota" };
+            _trayIcon = trayIcon;
             if (icon != null)
             {
                 _trayIconSource = icon;
-                _trayIcon.Icon = icon.Handle;
+                trayIcon.Icon = icon.Handle;
             }
-            _trayIcon.MessageWindow.MouseEventReceived += (_, e) =>
+            trayIcon.MessageWindow.MouseEventReceived += (_, e) =>
             {
                 if (e.MouseEvent is MouseEvent.IconLeftMouseUp or MouseEvent.IconLeftDoubleClick)
-                    _dispatcher?.TryEnqueue(() => _showMainWindow?.Invoke());
+                    _dispatcher?.TryEnqueueSafe(() => _showMainWindow?.Invoke());
+                else if (e.MouseEvent == MouseEvent.IconRightMouseUp)
+                    ShowTrayMenu();
             };
+            // A queued callback can outlive a rebuild; all icons share one Id, so a stale one would delete the new icon.
+            bool IsCurrent() => ReferenceEquals(_trayIcon, trayIcon);
+            var creator = new TrayIconCreator(trayIcon.Create, trayIcon.TryRemove, () => { if (IsCurrent()) _trayRetryTimer?.Start(); });
+            if (_dispatcher is { } dispatcher)
+            {
+                _trayRetryTimer = dispatcher.CreateTimer();
+                _trayRetryTimer.Interval = TrayCreateRetryDelay;
+                _trayRetryTimer.IsRepeating = false;
+                _trayRetryTimer.Tick += (_, _) => { if (IsCurrent()) creator.TryCreate(); };
+            }
+            trayIcon.MessageWindow.TaskbarCreated += (_, _) => _dispatcher?.TryEnqueueSafe(() =>
+            {
+                if (IsCurrent())
+                    creator.RecreateAfterTaskbarRestart();
+            });
+            creator.TryCreate();
+        }
+
+        private static void DisposeTrayIcon()
+        {
+            _trayRetryTimer?.Stop();
+            _trayRetryTimer = null;
+            if (_trayIcon != null) { _trayIcon.TryRemove(); _trayIcon.Dispose(); _trayIcon = null; }
+        }
+
+        private static void ShowTrayMenu()
+        {
+            if (_trayIcon is not { } trayIcon || _trayMenu is not { } menu)
+                return;
+            try
+            {
+                User32.GetCursorPos(out var cursor);
+                User32.SetForegroundWindow(trayIcon.WindowHandle);
+                menu.Show(trayIcon.WindowHandle, cursor.x, cursor.y);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Tray menu failed to open");
+            }
         }
 
         private static void StartMoveActiveSurface()
@@ -666,11 +709,11 @@ namespace TaskbarQuota.Taskbar
                 widget.Destroying += (sender, _) =>
                 {
                     if (sender is TaskBarWidget destroyedWidget)
-                        _dispatcher?.TryEnqueue(DispatcherQueuePriority.High, () => OnWidgetDestroying(destroyedWidget));
+                        _dispatcher?.TryEnqueueSafe(DispatcherQueuePriority.High, () => OnWidgetDestroying(destroyedWidget));
                 };
                 widget.HydrateProvider = provider => HydrateResult(UsageCoordinator.Instance, provider);
-                widget.Clicked += () => _dispatcher?.TryEnqueue(() => ToggleFlyout(widget));
-                widget.ActivityClicked += item => _dispatcher?.TryEnqueue(
+                widget.Clicked += () => _dispatcher?.TryEnqueueSafe(() => ToggleFlyout(widget));
+                widget.ActivityClicked += item => _dispatcher?.TryEnqueueSafe(
                     () => ToggleActivityFlyout(widget, item?.Id));
                 Widgets[target.Handle] = widget;
                 SyncWidgetState(widget);
@@ -813,7 +856,7 @@ namespace TaskbarQuota.Taskbar
         }
 
         private static void OnTopologyChanged(TopologyChange change)
-            => _dispatcher?.TryEnqueue(() => ScheduleTopologyRecovery(change));
+            => _dispatcher?.TryEnqueueSafe(() => ScheduleTopologyRecovery(change));
 
         // A tile that hit a XAML layout cycle stops redrawing while still accepting results.
         public static void RebuildAfterLayoutFailure()
@@ -1104,7 +1147,7 @@ namespace TaskbarQuota.Taskbar
 
         private static void PrewarmFlyout()
         {
-            _dispatcher?.TryEnqueue(DispatcherQueuePriority.Low, () =>
+            _dispatcher?.TryEnqueueSafe(DispatcherQueuePriority.Low, () =>
             {
                 FlyoutWindow? flyout = null;
                 try
@@ -1127,7 +1170,7 @@ namespace TaskbarQuota.Taskbar
             if (_dispatcher is null || IsFloatingSurface || WidgetSettingsService.CurrentSurface != WidgetSurfaceMode.Taskbar)
                 return;
 
-            _dispatcher.TryEnqueue(DispatcherQueuePriority.Low, () =>
+            _dispatcher.TryEnqueueSafe(DispatcherQueuePriority.Low, () =>
             {
                 if (IsFloatingSurface || WidgetSettingsService.CurrentSurface != WidgetSurfaceMode.Taskbar)
                     return;
@@ -1146,7 +1189,7 @@ namespace TaskbarQuota.Taskbar
         }
 
         private static void OnStateChanged(UsageResult result)
-            => _dispatcher?.TryEnqueue(DispatcherQueuePriority.High, () => ApplyStateChanged(result));
+            => _dispatcher?.TryEnqueueSafe(DispatcherQueuePriority.High, () => ApplyStateChanged(result));
 
         private static void ApplyStateChanged(UsageResult result)
         {
@@ -1226,7 +1269,7 @@ namespace TaskbarQuota.Taskbar
         // Foreground provider detection is strictly for quota context. Agent activity is refreshed by
         // its own desktop-app and terminal-command scans, even when another app has the focus.
         private static void OnActiveProviderChanged(ProviderId? _)
-            => _dispatcher?.TryEnqueue(SyncWidgetState);
+            => _dispatcher?.TryEnqueueSafe(SyncWidgetState);
 
         /// <summary>
         /// Fired from the WinEvent hook the instant the foreground window changes. Relays to the
@@ -1242,7 +1285,7 @@ namespace TaskbarQuota.Taskbar
             if (displayKey.Length == 0)
                 return;
 
-            _dispatcher?.TryEnqueue(() => RecordAdaptiveProviderDisplay(provider, displayKey, hwnd));
+            _dispatcher?.TryEnqueueSafe(() => RecordAdaptiveProviderDisplay(provider, displayKey, hwnd));
         }
 
         private static void OnWindowMoveSizeEnded(IntPtr hwnd)
@@ -1274,12 +1317,12 @@ namespace TaskbarQuota.Taskbar
         }
 
         private static void OnActiveToolPresenceChanged(bool isPresent)
-            => _dispatcher?.TryEnqueue(() => ApplyActiveToolPresenceChanged(isPresent));
+            => _dispatcher?.TryEnqueueSafe(() => ApplyActiveToolPresenceChanged(isPresent));
 
         // Focus-follows-provider flip (opt-in setting): the tile set changes even though presence and the
         // active provider did not, so the widget has to be re-synced from the recomputed set.
         private static void OnProviderForegroundChanged(bool _)
-            => _dispatcher?.TryEnqueue(SyncWidgetState);
+            => _dispatcher?.TryEnqueueSafe(SyncWidgetState);
 
         private static void ApplyActiveToolPresenceChanged(bool isPresent)
         {
@@ -1289,11 +1332,11 @@ namespace TaskbarQuota.Taskbar
         }
 
         private static void OnActivityChanged(AgentActivitySnapshot _)
-            => _dispatcher?.TryEnqueue(SyncWidgetState);
+            => _dispatcher?.TryEnqueueSafe(SyncWidgetState);
 
         private static void OnWidgetSettingsChanged(object? sender, EventArgs e)
         {
-            _dispatcher?.TryEnqueue(() =>
+            _dispatcher?.TryEnqueueSafe(() =>
             {
                 ConfigureActivityTimer();
                 if (WidgetSettingsService.CurrentSurface != _activeSurface)
@@ -1346,7 +1389,7 @@ namespace TaskbarQuota.Taskbar
                 topologyWatcher.Dispose();
                 _sessionTopologyWatcher = null;
             }
-            if (_trayIcon != null) { _trayIcon.TryRemove(); _trayIcon.Dispose(); _trayIcon = null; }
+            DisposeTrayIcon();
             try { _flyout?.Close(); } catch { }
             _flyout = null;
             DisposeFloatingWindow();

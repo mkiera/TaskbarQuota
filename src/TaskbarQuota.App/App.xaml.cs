@@ -124,7 +124,7 @@ namespace TaskbarQuota
                 return;
             }
 
-            dispatcher.TryEnqueue(() => ((App)Current).ShowMainWindow());
+            dispatcher.TryEnqueueSafe(() => ((App)Current).ShowMainWindow());
         }
 
         /// <summary>A redirected startup-widget launch must stay in the tray, matching the
@@ -148,7 +148,7 @@ namespace TaskbarQuota
                         if (Interlocked.Exchange(ref _taskbarInitializationQueued, 1) != 0)
                             return;
 
-                        if (dispatcher.TryEnqueue(InitializeTaskbarManager))
+                        if (dispatcher.TryEnqueueSafe(InitializeTaskbarManager))
                             return;
 
                         Interlocked.Exchange(ref _taskbarInitializationQueued, 0);
@@ -216,8 +216,18 @@ namespace TaskbarQuota
             IsQuitting = true;
             try { Kernel32.UnregisterApplicationRestart(); }
             catch (Exception ex) { Log.Warning(ex, "Could not unregister Windows restart recovery"); }
-            Quitting?.Invoke();
-            Current.Exit();
+            try
+            {
+                Quitting?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Shutdown cleanup failed");
+            }
+            finally
+            {
+                Current.Exit();
+            }
         }
 
         internal static bool ShouldRetryTaskbarInitialization(int completedAttempts)

@@ -118,7 +118,7 @@ public sealed partial class QuotaWidgetContent : UserControl
     }
 
     private void OnWidgetSettingsChanged(object? sender, EventArgs e)
-        => DispatcherQueue.TryEnqueue(() =>
+        => DispatcherQueue.TryEnqueueSafe(() =>
         {
             EnsureVisibleContent();
             RecomputeLayout();

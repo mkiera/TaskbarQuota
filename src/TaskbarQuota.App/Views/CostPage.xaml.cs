@@ -21,7 +21,7 @@ namespace TaskbarQuota.Views
         {
             Loaded -= CostPage_Loaded;
             UsageHistoryService.Enable();
-            DispatcherQueue.TryEnqueue(
+            DispatcherQueue.TryEnqueueSafe(
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 () => _ = ViewModel.LoadAsync());
         }

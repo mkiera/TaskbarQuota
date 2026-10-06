@@ -115,7 +115,7 @@ namespace TaskbarQuota
             if (_disposed)
                 return;
 
-            _nav.DispatcherQueue.TryEnqueue(RefreshPinBadges);
+            _nav.DispatcherQueue.TryEnqueueSafe(RefreshPinBadges);
         }
 
         private void Cards_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

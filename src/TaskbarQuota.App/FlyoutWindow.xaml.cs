@@ -121,7 +121,7 @@ namespace TaskbarQuota
         }
 
         private void OnWidgetSettingsChanged(object? sender, EventArgs e)
-            => DispatcherQueue.TryEnqueue(() =>
+            => DispatcherQueue.TryEnqueueSafe(() =>
             {
                 SyncProviderStripPins();
                 UpdateActivityControls();
@@ -176,7 +176,7 @@ namespace TaskbarQuota
             var appWindow = GetAppWindow();
             appWindow.Move(new PointInt32(-32000, -32000));
             appWindow.Show(false);
-            DispatcherQueue.TryEnqueue(
+            DispatcherQueue.TryEnqueueSafe(
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 () => { if (!_shown) appWindow.Hide(); });
         }
@@ -419,7 +419,7 @@ namespace TaskbarQuota
         }
 
         private void OnActivityChanged(AgentActivitySnapshot snapshot)
-            => DispatcherQueue.TryEnqueue(() => RenderActivity(snapshot));
+            => DispatcherQueue.TryEnqueueSafe(() => RenderActivity(snapshot));
 
         private void RenderActivity(AgentActivitySnapshot snapshot)
         {
@@ -476,7 +476,7 @@ namespace TaskbarQuota
 
             if (_showingActivity && selectedCard is not null)
             {
-                DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+                DispatcherQueue.TryEnqueueSafe(DispatcherQueuePriority.Low, () =>
                 {
                     selectedCard.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
                     ActivityScrollViewer.Focus(FocusState.Programmatic);
@@ -613,7 +613,7 @@ namespace TaskbarQuota
 
             if (_boundsUpdateTimer is null)
             {
-                DispatcherQueue.TryEnqueue(ApplyFlyoutBounds);
+                DispatcherQueue.TryEnqueueSafe(ApplyFlyoutBounds);
                 return;
             }
 

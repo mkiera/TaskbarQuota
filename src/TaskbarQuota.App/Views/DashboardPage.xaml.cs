@@ -68,7 +68,7 @@ namespace TaskbarQuota.Views
                 if (!_useCompactLayout)
                 {
                     UsageHistoryService.Enable();
-                    DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _ = ViewModel.LoadAsync());
+                    DispatcherQueue.TryEnqueueSafe(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _ = ViewModel.LoadAsync());
                 }
             };
             Unloaded += (_, _) =>
@@ -119,7 +119,7 @@ namespace TaskbarQuota.Views
             => QueueMeasuredHeightReport();
 
         private void OnWidgetSettingsChanged(object? sender, EventArgs e)
-            => DispatcherQueue.TryEnqueue(() => UpdatePinPresentation(ViewModel.SelectedCard));
+            => DispatcherQueue.TryEnqueueSafe(() => UpdatePinPresentation(ViewModel.SelectedCard));
 
         private void OnSelectedCardChanged(ProviderCardViewModel? card)
         {
@@ -176,7 +176,7 @@ namespace TaskbarQuota.Views
                 return;
 
             _heightReportQueued = true;
-            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            DispatcherQueue.TryEnqueueSafe(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
             {
                 _heightReportQueued = false;
                 if (_useCompactLayout && DashboardContent.ActualHeight > 0)
@@ -186,7 +186,7 @@ namespace TaskbarQuota.Views
 
         private void OnScrollToTopRequested()
         {
-            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            DispatcherQueue.TryEnqueueSafe(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
             {
                 MainScrollViewer.ChangeView(null, 0, null);
             });
